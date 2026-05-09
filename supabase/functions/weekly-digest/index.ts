@@ -71,21 +71,24 @@ Deno.serve(async (req: Request) => {
       const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:48px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:#1e3a5f;">
+<body style="margin:0;padding:48px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:#ffffff;">
 
   <!-- Outer wrapper centres the card -->
   <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;">
     <tr><td>
 
-      <!-- Logo -->
-      <p style="text-align:center;margin:0 0 24px;font-size:13px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#93c5fd;">GOGODEEP</p>
+      <!-- Logo + mascot -->
+      <div style="text-align:center;margin:0 0 24px;">
+        <img src="${siteUrl}/whale-e.png" alt="Whal-E" width="56" height="56" style="border-radius:50%;object-fit:cover;display:inline-block;margin-bottom:10px;" />
+        <p style="margin:0;font-size:13px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#1e3a5f;">GOGODEEP</p>
+      </div>
 
       <!-- Card -->
-      <div style="background:#0f1f35;border-radius:20px;padding:36px 32px;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+      <div style="background:#0f1f35;border-radius:20px;padding:36px 32px;box-shadow:0 8px 40px rgba(0,0,0,0.15);">
 
         <!-- Header -->
         <h1 style="color:#f8fafc;font-size:26px;font-weight:800;margin:0 0 8px;line-height:1.25;text-align:center;">${username}, here's your week</h1>
-        <p style="color:#64748b;font-size:14px;margin:0 0 32px;line-height:1.6;text-align:center;">Here's what Gogodeep learned about your understanding this week.</p>
+        <p style="color:#94a3b8;font-size:14px;margin:0 0 32px;line-height:1.6;text-align:center;">Here's what Gogodeep learned about your understanding this week.</p>
 
         <!-- Stats row: scans + most scanned side by side -->
         <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
@@ -122,9 +125,9 @@ Deno.serve(async (req: Request) => {
       </div>
 
       <!-- Footer -->
-      <p style="color:#4a6785;font-size:12px;text-align:center;margin:24px 0 0;line-height:1.6;">
+      <p style="color:#94a3b8;font-size:12px;text-align:center;margin:24px 0 0;line-height:1.6;">
         You're getting this because you have a Gogodeep account.<br>
-        <a href="${siteUrl}" style="color:#4a6785;text-decoration:underline;">Unsubscribe</a>
+        <a href="${siteUrl}/unsubscribe?email=${encodeURIComponent(user.email)}" style="color:#94a3b8;text-decoration:underline;">Unsubscribe</a>
       </p>
 
     </td></tr>
@@ -133,6 +136,7 @@ Deno.serve(async (req: Request) => {
 </body>
 </html>`;
 
+      const unsubscribeUrl = `${siteUrl}/unsubscribe?email=${encodeURIComponent(user.email)}`;
       const emailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -144,6 +148,10 @@ Deno.serve(async (req: Request) => {
           to: [user.email],
           subject: `${scanCount} scan${scanCount === 1 ? "" : "s"} this week${topTopic ? ` · focus: ${topTopic}` : ""}`,
           html,
+          headers: {
+            "List-Unsubscribe": `<mailto:unsubscribe@gogodeep.com?subject=unsubscribe&body=${encodeURIComponent(user.email)}>, <${unsubscribeUrl}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
         }),
       });
 

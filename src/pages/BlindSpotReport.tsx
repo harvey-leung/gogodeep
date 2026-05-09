@@ -637,8 +637,16 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
 
   useEffect(() => {
     if (pendingMessage) {
-      send(pendingMessage);
+      setInput(pendingMessage);
+      setShowSuggestions(false);
       onMessageHandled?.();
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.style.height = "auto";
+          inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
+        }
+      }, 50);
     }
   }, [pendingMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
