@@ -8,6 +8,7 @@ import { whaleToast } from "@/lib/whaleToast";
 import { Button } from "@/components/ui/button";
 import EducatorLayout from "@/components/EducatorLayout";
 import { checkScanCredits, SCAN_CACHE_KEY } from "@/lib/supabase";
+import { calcScanXP, CHALLENGE_BONUS_XP, addBonusXP } from "@/lib/xp";
 import { pendingFileStore, scanImageStore } from "@/lib/pendingFile";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,42 +28,93 @@ function useUtcResetCountdown() {
   useEffect(() => { const id = setInterval(() => setLabel(get()), 30000); return () => clearInterval(id); }, []);
   return label;
 }
-const GUEST_SCAN_KEY = "gogodeep_guest_scan_used";
+
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+
+function notifyScanXP(userId: string, topic: string | null, errorCategory: string | null) {
+  const base = calcScanXP(topic, errorCategory);
+  const isChallenge = sessionStorage.getItem("gogodeep_challenge_bonus") === "1";
+  sessionStorage.removeItem("gogodeep_challenge_bonus");
+  const bonus = isChallenge ? CHALLENGE_BONUS_XP : 0;
+  const total = base + bonus;
+  if (isChallenge) addBonusXP(userId, bonus, "challenge");
+  const msg = isChallenge ? `+${total} XP — challenge bonus!` : `+${total} XP`;
+  window.dispatchEvent(new CustomEvent("whale-notify", { detail: { message: msg, type: "success" } }));
+}
+
+const SCAN_PHASES = [
+  "Reading your problem…",
+  "Identifying the concept…",
+  "Building the breakdown…",
+  "Almost done…",
+];
 
 function WhaleScanLoader({ complete }: { complete: boolean }) {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    if (complete) return;
+    const t = setInterval(() => setPhase(p => Math.min(p + 1, SCAN_PHASES.length - 1)), 950);
+    return () => clearInterval(t);
+  }, [complete]);
+
   return (
-    <div className="flex flex-col items-center gap-5 px-6 text-center">
-      <div className="relative">
-        <img
-          src="/whale-e.png"
-          alt=""
-          className="whale-img h-24 w-24 object-contain"
-          style={{
-            animation: complete ? "none" : "float 4s ease-in-out infinite",
-            transition: "transform 0.3s ease",
-            transform: complete ? "scale(1.08)" : "scale(1)",
-          }}
-        />
-        {complete && (
-          <div className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-green-500 shadow-md animate-in zoom-in duration-300">
-            <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </div>
+    <div className="flex flex-col items-center gap-6 px-8 py-4 text-center z-10 w-full">
+      {/* Rings + Blue */}
+      <div className="relative flex items-center justify-center">
+        {!complete && (
+          <>
+            <span className="absolute h-32 w-32 rounded-full bg-primary/10 animate-ping" style={{ animationDuration: "1.6s" }} />
+            <span className="absolute h-20 w-20 rounded-full bg-primary/15 animate-ping" style={{ animationDuration: "1.6s", animationDelay: "0.3s" }} />
+          </>
         )}
+        <div className={cn(
+          "relative flex h-24 w-24 items-center justify-center rounded-full transition-colors duration-500",
+          complete ? "bg-green-500/20" : "bg-primary/10"
+        )}>
+          <img
+            src="/blue.png"
+            alt="Blue"
+            draggable={false}
+            className={cn("h-20 w-20 object-contain transition-all duration-300", !complete && "animate-bounce")}
+            style={{ animationDuration: "1.4s", filter: "drop-shadow(0 4px 12px hsl(var(--primary)/0.3))" }}
+          />
+          {complete && (
+            <div className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-green-500 shadow-lg animate-in zoom-in duration-300">
+              <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+          )}
+        </div>
       </div>
-      <div className="w-32 overflow-hidden rounded-full bg-secondary h-1">
-        <div
-          className="h-full rounded-full bg-primary transition-all duration-500"
-          style={{
-            animation: complete ? "none" : "loading-bar 1.6s ease-in-out infinite",
-            width: complete ? "100%" : undefined,
-          }}
-        />
+
+      {/* Phase text + bar */}
+      <div className="w-full max-w-[220px] space-y-3">
+        <p className={cn(
+          "text-sm font-black transition-all duration-300",
+          complete ? "text-green-500" : "text-foreground"
+        )}>
+          {complete ? "Done! Loading results…" : SCAN_PHASES[phase]}
+        </p>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+          <div
+            className={cn("h-full rounded-full transition-all duration-500", complete ? "bg-green-500" : "bg-primary")}
+            style={{
+              width: complete ? "100%" : undefined,
+              animation: complete ? "none" : "loading-bar 1.6s ease-in-out infinite",
+            }}
+          />
+        </div>
+        {/* Phase dots */}
+        <div className="flex justify-center gap-1.5">
+          {SCAN_PHASES.map((_, i) => (
+            <div key={i} className={cn(
+              "h-1.5 rounded-full transition-all duration-300",
+              i <= phase ? "w-4 bg-primary" : "w-1.5 bg-secondary"
+            )} />
+          ))}
+        </div>
       </div>
-      <p className={`text-sm font-semibold tracking-widest uppercase transition-colors duration-300 ${complete ? "text-green-500" : "text-muted-foreground"}`}>
-        {complete ? "Done!" : "Analysing"}
-      </p>
     </div>
   );
 }
@@ -73,14 +125,29 @@ const DiagnosticLab = () => {
   const [scanComplete, setScanComplete] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [textInput, setTextInput] = useState("");
+  const [showTextInput, setShowTextInput] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
   const resetCountdown = useUtcResetCountdown();
   const pendingNavRef = useRef<{ imageUrl: string; diagnosis: unknown } | null>(null);
   const [cooldownActive, setCooldownActive] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    try {
+      const challenge = sessionStorage.getItem("gogodeep_challenge");
+      if (challenge) {
+        sessionStorage.removeItem("gogodeep_challenge");
+        setTextInput(challenge);
+        setShowTextInput(true);
+        setTimeout(() => textareaRef.current?.focus(), 80);
+      }
+    } catch { /* ignore */ }
+  }, []);
   const queryClient = useQueryClient();
+
 
   const SCAN_COOLDOWN_MS = 10_000;
   const checkCooldown = async (): Promise<boolean> => {
@@ -102,11 +169,10 @@ const DiagnosticLab = () => {
     async (file: File) => {
       const complexityLevel = 2;
       if (!await checkCooldown()) return;
-      // Check if guest already used their free scan
       const {
         data: { user: preCheckUser },
       } = await supabase.auth.getUser();
-      if (!preCheckUser?.id && localStorage.getItem(GUEST_SCAN_KEY)) {
+      if (!preCheckUser?.id) {
         navigate("/signup");
         return;
       }
@@ -186,18 +252,6 @@ const DiagnosticLab = () => {
           (data as any)?.underlying_concept && `Underlying concept: ${(data as any).underlying_concept}`,
         ].filter(Boolean).join("\n");
 
-        if (!user?.id) {
-          // Guest gets 1 free scan — navigate directly to report, no DB insert
-          localStorage.setItem(GUEST_SCAN_KEY, "1");
-          window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
-          try {
-            sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", guest: true }));
-          } catch { /* ignore */ }
-          setScanComplete(true);
-          await new Promise((r) => setTimeout(r, 580));
-          navigate("/report", { state: { imageUrl: url, diagnosis: data, mode: "guide", guest: true } });
-          return;
-        }
 
         const [{ data: insertedScan, error: insertError }] = await Promise.all([
           (supabase as any)
@@ -232,6 +286,8 @@ const DiagnosticLab = () => {
           sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", scanId }));
         } catch { /* ignore */ }
         window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
+        // XP notification
+        notifyScanXP(user.id, topic, (data as any)?.error_category ?? null);
         setScanComplete(true);
         await new Promise((r) => setTimeout(r, 580));
         navigate("/report", { state: { imageUrl: url, diagnosis: data, mode: "guide", scanId } });
@@ -249,14 +305,21 @@ const DiagnosticLab = () => {
   const analyzeText = useCallback(async () => {
     const trimmed = textInput.trim();
     if (!trimmed) return;
+
+    // Reject obvious nonsense: too short or no real words
+    const words = trimmed.split(/\s+/).filter(w => w.length > 1);
+    if (trimmed.length < 8 || words.length < 2) {
+      whaleToast.error("That doesn't look like a question — try typing it out more fully.");
+      return;
+    }
+
     if (!await checkCooldown()) return;
 
-    // Check if guest already used their free scan
     const {
       data: { user: preCheckUser },
     } = await supabase.auth.getUser();
-    if (!preCheckUser?.id && localStorage.getItem(GUEST_SCAN_KEY)) {
-      setShowLoginGate(true);
+    if (!preCheckUser?.id) {
+      navigate("/signup");
       return;
     }
 
@@ -301,18 +364,6 @@ const DiagnosticLab = () => {
         (data as any)?.underlying_concept && `Underlying concept: ${(data as any).underlying_concept}`,
       ].filter(Boolean).join("\n");
 
-      if (!user?.id) {
-        // Guest gets 1 free scan — navigate directly to report, no DB insert
-        localStorage.setItem(GUEST_SCAN_KEY, "1");
-        window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
-        try {
-          sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", guest: true, inputText: trimmed }));
-        } catch { /* ignore */ }
-        setScanComplete(true);
-        await new Promise((r) => setTimeout(r, 580));
-        navigate("/report", { state: { imageUrl: null, inputText: trimmed, diagnosis: data, mode: "guide", guest: true } });
-        return;
-      }
 
       const [{ data: insertedScan, error: insertError }] = await Promise.all([
         (supabase as any)
@@ -342,6 +393,7 @@ const DiagnosticLab = () => {
         sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", scanId, inputText: trimmed }));
       } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
+      notifyScanXP(user.id, topic, (data as any)?.error_category ?? null);
       setScanComplete(true);
       await new Promise((r) => setTimeout(r, 580));
       navigate("/report", { state: { imageUrl: null, inputText: trimmed, diagnosis: data, mode: "guide", scanId } });
@@ -409,62 +461,115 @@ const DiagnosticLab = () => {
   }, [analyzeImage]);
 
   return (
-    <EducatorLayout title="Workspace" subtitle="Upload a question and you will understand it within minutes." noSidebar>
+    <EducatorLayout title="Workspace" subtitle="Drop it. Scan it. Understand it." noSidebar>
       <Helmet>
         <title>Workspace</title>
         <meta name="description" content="Upload a photo of your exam working or handwritten notes. Gogodeep analyses hard STEM questions, finds your error, and guides you step by step. Supports Physics HL, Math HL AA, AP Calculus BC, and AP Statistics." />
         <link rel="canonical" href="https://gogodeep.com/workspace" />
       </Helmet>
-      <div className="mx-auto max-w-2xl mt-6 sm:mt-12" data-feature="ai-scanner-for-hard-stem-questions" data-input-type="handwritten-notes,photo-upload,exam-working">
-        <div className="rounded-xl border border-border bg-card">
-          <div className="p-5 sm:p-6">
-            <label
-              aria-label="Upload photo of handwritten notes or exam working for AI analysis"
-              onDragOver={(e) => { e.preventDefault(); if (!isAnalyzing) setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => { if (isAnalyzing) return; onDrop(e); }}
-              className={cn(
-                "group relative flex min-h-[18rem] w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed transition-colors",
-                isDragging ? "border-primary bg-primary/5" : "border-border bg-secondary/50 hover:border-primary/50",
-                isAnalyzing && "cursor-not-allowed"
-              )}
-            >
-              <input type="file" accept="image/*" className="hidden" onChange={onFileInput} disabled={isAnalyzing || cooldownActive} />
-              {isAnalyzing ? (
-                <WhaleScanLoader complete={scanComplete} />
-              ) : cooldownActive ? (
-                <div className="flex flex-col items-center gap-3 px-6 text-center">
-                  <AlertTriangle className="h-9 w-9 text-yellow-500" />
-                  <p className="text-sm font-semibold text-foreground">Wait a moment</p>
-                  <p className="text-xs text-muted-foreground">Try again in a few seconds.</p>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-4 px-6 text-center">
-                  {isDragging ? (
-                    <Waves className="h-9 w-9 text-primary" />
-                  ) : (
-                    <Upload className="h-9 w-9 text-muted-foreground transition-colors group-hover:text-primary" />
-                  )}
-                  <p className="text-sm font-semibold tracking-tight text-foreground">
-                    {selectedFile ? selectedFile.name : "Drop a file or tap to browse"}
-                  </p>
-                </div>
-              )}
-            </label>
 
-            <div className="mt-4">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground">or</span>
-                <div className="flex-1 h-px bg-border" />
+      <style>{`
+        @keyframes scan-line {
+          0% { transform: translateY(-100%); opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { transform: translateY(600%); opacity: 0; }
+        }
+        .scan-line { animation: scan-line 2.4s ease-in-out infinite; }
+        @keyframes border-spin {
+          to { stroke-dashoffset: -400; }
+        }
+      `}</style>
+
+      <div className="mx-auto max-w-2xl mt-6 sm:mt-10" data-feature="ai-scanner-for-hard-stem-questions">
+
+        {/* ── Upload zone ── */}
+        <label
+          aria-label="Upload problem screenshot for AI analysis"
+          onDragOver={(e) => { e.preventDefault(); if (!isAnalyzing) setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => { if (isAnalyzing) return; onDrop(e); }}
+          className={cn(
+            "group relative flex min-h-[22rem] w-full cursor-pointer flex-col items-center justify-center rounded-3xl overflow-hidden transition-all duration-300",
+            isDragging
+              ? "border-2 border-primary bg-primary/8 shadow-[0_0_80px_hsl(var(--primary)/0.25)]"
+              : isAnalyzing
+              ? "border-2 border-primary/40 bg-card cursor-not-allowed"
+              : "border-2 border-dashed border-primary/25 bg-gradient-to-br from-card via-card to-primary/5 hover:border-primary/50 hover:shadow-[0_0_48px_hsl(var(--primary)/0.12)]"
+          )}
+        >
+          <input type="file" accept="image/*" className="hidden" onChange={onFileInput} disabled={isAnalyzing || cooldownActive} />
+
+          {/* Faint Blue watermark */}
+          {!isAnalyzing && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-[0.035]">
+              <img src="/blue.png" alt="" draggable={false} className="h-80 w-80 object-contain" />
+            </div>
+          )}
+
+          {/* Scanning line during drag */}
+          {isDragging && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-primary/60 blur-sm scan-line" />
+          )}
+
+          {isAnalyzing ? (
+            <WhaleScanLoader complete={scanComplete} />
+          ) : cooldownActive ? (
+            <div className="flex flex-col items-center gap-3 px-6 text-center z-10">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-500/10 border border-yellow-500/20">
+                <AlertTriangle className="h-7 w-7 text-yellow-500" />
               </div>
+              <p className="text-base font-black text-foreground">Hold on…</p>
+              <p className="text-sm text-muted-foreground">Wait a few seconds before scanning again.</p>
+            </div>
+          ) : isDragging ? (
+            <div className="flex flex-col items-center gap-4 z-10">
+              <Waves className="h-12 w-12 text-primary animate-pulse" />
+              <p className="text-2xl font-black text-primary">Drop it!</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-5 px-8 text-center z-10">
+              {/* Animated upload icon */}
+              <div className="relative">
+                <div className="absolute inset-0 rounded-2xl bg-primary/10 animate-ping" style={{ animationDuration: "2.5s" }} />
+                <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-primary/30 bg-primary/8 transition-all group-hover:border-primary/60 group-hover:bg-primary/15 group-hover:scale-110">
+                  <Upload className="h-7 w-7 text-primary" />
+                </div>
+              </div>
+              <div>
+                <p className="text-xl font-black tracking-tight text-foreground">
+                  {selectedFile ? selectedFile.name : "Drop your hardest problem"}
+                </p>
+                <p className="mt-1.5 text-sm text-muted-foreground">
+                  Maths · Physics · Chemistry · Biology
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/40">
+                <span>JPG</span><span>·</span><span>PNG</span><span>·</span><span>WebP</span><span>·</span><span>HEIC</span>
+              </div>
+            </div>
+          )}
+        </label>
+
+        {/* ── Text input ── */}
+        <div className="mt-4">
+          {!showTextInput ? (
+            <button
+              className="w-full rounded-2xl border border-border bg-card/50 py-3 text-xs font-black uppercase tracking-widest text-muted-foreground transition-all hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+              onClick={() => { setShowTextInput(true); setTimeout(() => textareaRef.current?.focus(), 50); }}
+            >
+              or type your question ↓
+            </button>
+          ) : (
+            <div className="rounded-2xl border-2 border-primary/20 bg-card overflow-hidden shadow-[0_0_32px_hsl(var(--primary)/0.06)] transition-all focus-within:border-primary/40 focus-within:shadow-[0_0_40px_hsl(var(--primary)/0.10)]">
               <textarea
+                ref={textareaRef}
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 disabled={isAnalyzing}
-                placeholder="Manually enter a difficult problem…"
-                rows={3}
-                className="w-full resize-none rounded-lg border border-border bg-secondary/50 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/60 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="Type or paste your question here…"
+                rows={4}
+                className="w-full resize-none bg-transparent px-5 py-4 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && textInput.trim()) {
                     e.preventDefault();
@@ -472,15 +577,20 @@ const DiagnosticLab = () => {
                   }
                 }}
               />
-              <Button
-                onClick={analyzeText}
-                disabled={isAnalyzing || !textInput.trim()}
-                className="mt-2 w-full bg-primary hover:bg-primary/90 disabled:opacity-40"
-              >
-                {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Analyse"}
-              </Button>
+              <div className="flex items-center justify-between border-t border-primary/10 bg-primary/[0.02] px-5 py-3">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
+                  {isMac ? "⌘↵" : "Ctrl+↵"} to scan
+                </span>
+                <button
+                  onClick={analyzeText}
+                  disabled={isAnalyzing || !textInput.trim()}
+                  className="rounded-xl bg-amber-400 px-5 py-2 text-sm font-black text-black shadow-lg shadow-amber-400/20 transition-all hover:bg-amber-300 hover:scale-[1.04] disabled:opacity-30 disabled:pointer-events-none"
+                >
+                  {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Scan →"}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

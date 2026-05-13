@@ -228,7 +228,7 @@
 }
 
 /* Whale image — tints to match the active colour theme */
-.whale-img { filter: var(--whale-filter); transition: filter 0.4s ease; }
+.whale-img { filter: var(--whale-filter); transition: filter 0.4s ease; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 
 @keyframes gold-ring {
   0%   { transform: rotate(0deg);   opacity: 1; }

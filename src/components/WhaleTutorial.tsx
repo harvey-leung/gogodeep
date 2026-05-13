@@ -17,7 +17,7 @@ const STEPS: StepDef[] = [
   {
     x: "50%", y: "40%", bubbleUp: false,
     title: "Hey there! 👋",
-    message: "I'm Whal-E! I'll give you a quick tour of Gogodeep — just a few steps, I promise.",
+    message: "I'm Blue! I'll give you a quick tour of Gogodeep — just a few steps, I promise.",
     nextLabel: "Let's go →", showNext: true, spotlight: null,
   },
   {

@@ -1,8 +1,9 @@
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, ResponsiveContainer, Cell, Tooltip } from "recharts";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Helmet } from "react-helmet-async";
-import { Aperture, Microscope, Compass, ArrowRight, Zap, ScanLine, BookOpen, Upload, Loader2, Flame, ChevronRight, ChevronDown, BrainCircuit, Lock, Settings2, Lightbulb, RefreshCw } from "lucide-react";
+import { Aperture, Microscope, Compass, ArrowRight, Zap, ScanLine, BookOpen, Loader2, Flame, ChevronRight, ChevronDown, BrainCircuit, Lock, Settings2, Lightbulb, RefreshCw } from "lucide-react";
 import { UnitCircle } from "@/components/interact/MathModels2";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -13,8 +14,8 @@ import gogodeepLogo from "@/assets/gogodeep-logo.png";
 import { supabase } from "@/integrations/supabase/client";
 import { SCAN_LIMITS, SCAN_CACHE_KEY } from "@/lib/supabase";
 import { FREE_FOR_ALL } from "@/lib/featureFlags";
-import { pendingFileStore } from "@/lib/pendingFile";
 import { whaleToast } from "@/lib/whaleToast";
+import { calcScanXP, QUIZ_XP, CHALLENGE_BONUS_XP, addBonusXP, getBonusXPEntries } from "@/lib/xp";
 import type { User } from "@supabase/supabase-js";
 
 const QUOTES = [
@@ -90,6 +91,54 @@ const steps = [
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
+// ── XP & level system ─────────────────────────────────────────────────────────
+
+const LEVELS = [
+  { level: 1,  name: "Bronze",   xpReq: 0,     color: "#9a5b1e", glow: "#9a5b1e40", inner: "#c97d38", text: "#fff" },
+  { level: 2,  name: "Silver",   xpReq: 100,   color: "#5a6472", glow: "#5a647240", inner: "#8a97a4", text: "#fff" },
+  { level: 3,  name: "Gold",     xpReq: 400,   color: "#c47d00", glow: "#c47d0040", inner: "#e8a800", text: "#fff" },
+  { level: 4,  name: "Platinum", xpReq: 1000,  color: "#4060a0", glow: "#4060a040", inner: "#6888c8", text: "#fff" },
+  { level: 5,  name: "Diamond",  xpReq: 2000,  color: "#0099bb", glow: "#0099bb40", inner: "#00c8e8", text: "#fff" },
+  { level: 6,  name: "Emerald",  xpReq: 3500,  color: "#1a8c4e", glow: "#1a8c4e40", inner: "#28b864", text: "#fff" },
+  { level: 7,  name: "Ruby",     xpReq: 5500,  color: "#c0241a", glow: "#c0241a40", inner: "#e84030", text: "#fff" },
+  { level: 8,  name: "Sapphire", xpReq: 8000,  color: "#1464a8", glow: "#1464a840", inner: "#2888d4", text: "#fff" },
+  { level: 9,  name: "Obsidian", xpReq: 11000, color: "#6b3090", glow: "#6b309040", inner: "#9040c0", text: "#fff" },
+  { level: 10, name: "Master",   xpReq: 15000, color: "#c84800", glow: "#c8480040", inner: "#f06000", text: "#fff" },
+] as const;
+type Level = typeof LEVELS[number];
+
+
+function hexPath(cx: number, cy: number, r: number): string {
+  return "M " + Array.from({ length: 6 }, (_, i) => {
+    const a = (i * 60 - 30) * Math.PI / 180;
+    return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`;
+  }).join(" L ") + " Z";
+}
+
+function LevelBadge({ lvl, size = 52 }: { lvl: Level; size?: number }) {
+  const cx = size / 2, cy = size / 2, r = size * 0.43, ri = r * 0.70;
+  const id = `lvl-${lvl.level}-${size}`;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <defs>
+        <radialGradient id={id} cx="35%" cy="30%" r="70%">
+          <stop offset="0%" stopColor={lvl.inner} />
+          <stop offset="100%" stopColor={lvl.color} />
+        </radialGradient>
+      </defs>
+      <path d={hexPath(cx, cy, r + 3)} fill={lvl.glow} />
+      <path d={hexPath(cx, cy, r)} fill={`url(#${id})`} />
+      <path d={hexPath(cx, cy, ri)} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
+      <text x={cx} y={cy + 0.5} textAnchor="middle" dominantBaseline="middle"
+        fill={lvl.text} fontSize={size * 0.32} fontWeight="900" fontFamily="system-ui,sans-serif">
+        {lvl.level}
+      </text>
+    </svg>
+  );
+}
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
 type ErrorLog = {
   id: string;
   error_category: string | null;
@@ -108,10 +157,13 @@ type DashboardData = {
   conceptsLearned: number;
   topTags: { tag: string; count: number }[];
   recentTopics: string[];
-  recentScans: { id: string; label: string; created_at: string | null }[];
+  recentScans: { id: string; label: string; created_at: string | null; error_category: string | null }[];
   loginStreak: number;
   bonusScans: number;
   weeklyScans: { day: string; count: number }[];
+  totalXP: number;
+  bestDayXP: number;
+  todayXP: number;
 };
 
 function useUtcResetCountdown() {
@@ -176,9 +228,36 @@ function formatTime(secs: number) {
 
 const Dashboard = ({ user }: { user: User }) => {
   const username = user.user_metadata?.username ?? user.email?.split("@")[0] ?? "there";
+  const [heroPhase, setHeroPhase] = useState<0 | 1 | 2>(0);
+
+  // Daily XP claim (random 40–80 XP, resets each day)
+  const DAILY_CLAIM_KEY = `gogodeep_claim_${user.id}`;
+  const [dailyClaim, setDailyClaim] = useState<{ date: string; amount: number; claimed: boolean }>(() => {
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const stored = JSON.parse(localStorage.getItem(`gogodeep_claim_${user.id}`) ?? "null");
+      if (stored?.date === today) return stored;
+    } catch {}
+    const today = new Date().toISOString().split("T")[0];
+    const amount = 40 + Math.floor(Math.random() * 41);
+    const claim = { date: today, amount, claimed: false };
+    try { localStorage.setItem(`gogodeep_claim_${user.id}`, JSON.stringify(claim)); } catch {}
+    return claim;
+  });
+
+  const GREETING_PHRASES = [
+    "Today is your day",
+    "Make yourself proud",
+    "Your future self is watching",
+    "Make today count",
+    "No excuses today",
+    "Outwork yesterday",
+    "Earn your rest",
+    "Own today",
+    "Make it happen",
+  ];
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dropHover, setDropHover] = useState(false);
   const [quiz, setQuiz] = useState<QuizState | null>(null);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[] | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
@@ -197,11 +276,33 @@ const Dashboard = ({ user }: { user: User }) => {
   const [generatingNext, setGeneratingNext] = useState(false);
   const QUIZ_SAVE_KEY = `gogodeep_qs_${user.id}`;
   const QUIZ_HIST_KEY = `gogodeep_qh_${user.id}`;
+  const QUIZ_CACHE_Q_KEY = `gogodeep_rq_q_${user.id}`;
+  const QUIZ_CACHE_D_KEY = `gogodeep_rq_d_${user.id}`;
+  const QUIZ_DONE_KEY = `gogodeep_rq_done_${user.id}`;
+  const [quizDoneToday, setQuizDoneToday] = useState(() => {
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      return localStorage.getItem(`gogodeep_rq_done_${user.id}`) === today;
+    } catch { return false; }
+  });
   const [scanAtBottom, setScanAtBottom] = useState(false);
   const [quoteOffset, setQuoteOffset] = useState(0);
   const scanScrollRef = useRef<HTMLDivElement>(null);
   const resetCountdown = useUtcResetCountdown();
   const location = useLocation();
+  const GOAL_KEY = `gogodeep_daily_goal_${user.id}`;
+  const [dailyGoal, setDailyGoal] = useState<number>(() => {
+    try { return parseInt(localStorage.getItem(`gogodeep_daily_goal_${user.id}`) ?? "5", 10) || 5; } catch { return 5; }
+  });
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
+
+  // Hero entrance animation
+  useEffect(() => {
+    const t1 = setTimeout(() => setHeroPhase(1), 1500); // hold for reading
+    const t2 = setTimeout(() => setHeroPhase(2), 2200); // done — overlay gone
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
 
   // Show success toast when redirected back from Stripe
   useEffect(() => {
@@ -266,7 +367,26 @@ const Dashboard = ({ user }: { user: User }) => {
         id: l.id,
         label: l.specific_error_tag ?? l.topic ?? "Unnamed scan",
         created_at: l.created_at,
+        error_category: l.error_category,
       }));
+
+      const dayXP: Record<string, number> = {};
+      for (const l of logs) {
+        if (l.created_at) {
+          const d = l.created_at.split("T")[0];
+          dayXP[d] = (dayXP[d] ?? 0) + calcScanXP(l.specific_error_tag ?? l.topic, l.error_category);
+        }
+      }
+      // Add bonus XP (quiz, challenge) from localStorage
+      const bonusEntries = getBonusXPEntries(user.id);
+      for (const e of bonusEntries) {
+        dayXP[e.date] = (dayXP[e.date] ?? 0) + e.xp;
+      }
+      const todayStr = new Date().toISOString().split("T")[0];
+      const todayXP = dayXP[todayStr] ?? 0;
+      const totalXP = logs.reduce((sum, l) => sum + calcScanXP(l.specific_error_tag ?? l.topic, l.error_category), 0)
+        + bonusEntries.reduce((sum, e) => sum + e.xp, 0);
+      const bestDayXP = Object.values(dayXP).length ? Math.max(...Object.values(dayXP)) : 0;
 
       const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
       const weeklyScans = Array.from({ length: 7 }, (_, i) => {
@@ -275,7 +395,7 @@ const Dashboard = ({ user }: { user: User }) => {
         return { day: DAY_LABELS[d.getDay()], count: logs.filter((l) => l.created_at?.startsWith(dateStr)).length };
       });
 
-      setData({ totalScans: logs.length, creditsLeft, usedToday: used, dailyLimit: limit as number | null, plan, conceptualCount, conceptsLearned, topTags, recentTopics, recentScans, loginStreak, bonusScans, weeklyScans });
+      setData({ totalScans: logs.length, creditsLeft, usedToday: used, dailyLimit: limit as number | null, plan, conceptualCount, conceptsLearned, topTags, recentTopics, recentScans, loginStreak, bonusScans, weeklyScans, totalXP, bestDayXP, todayXP });
       setLoading(false);
     };
     load();
@@ -290,9 +410,31 @@ const Dashboard = ({ user }: { user: User }) => {
     return Array.from(concepts);
   };
 
-  // Auto-generate quiz questions into state when enough scans exist
+  // Generate recap quiz questions — only on new day, after completion, or when none exist
   useEffect(() => {
     if (!data || data.recentScans.length < 3) return;
+
+    const today = new Date().toISOString().split("T")[0];
+    const cachedDate = localStorage.getItem(QUIZ_CACHE_D_KEY);
+    const cachedRaw = localStorage.getItem(QUIZ_CACHE_Q_KEY);
+
+    // Use cached questions if they're from today
+    if (cachedDate === today && cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw);
+        if (Array.isArray(cached) && cached.length) {
+          setQuizQuestions(cached);
+          return;
+        }
+      } catch {}
+    }
+
+    // New day: reset done flag
+    if (cachedDate !== today) {
+      try { localStorage.removeItem(QUIZ_DONE_KEY); } catch {}
+      setQuizDoneToday(false);
+    }
+
     const topics = data.recentScans.slice(0, 5).map((s) => s.label).filter(Boolean);
     if (!topics.length) return;
     setQuizLoading(true);
@@ -316,6 +458,10 @@ const Dashboard = ({ user }: { user: User }) => {
         };
       });
       setQuizQuestions(questions);
+      try {
+        localStorage.setItem(QUIZ_CACHE_D_KEY, today);
+        localStorage.setItem(QUIZ_CACHE_Q_KEY, JSON.stringify(questions));
+      } catch {}
     });
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -352,8 +498,8 @@ const Dashboard = ({ user }: { user: User }) => {
     setQuizHistory(newHistory);
     try { localStorage.setItem(QUIZ_HIST_KEY, JSON.stringify(newHistory)); } catch {}
 
-    // Deep users: pre-generate next quiz
     if (data?.plan === "deep" && data.recentScans.length >= 3) {
+      // Deep users: generate fresh questions for next round
       const topics = data.recentScans.slice(0, 5).map((s) => s.label).filter(Boolean);
       if (!topics.length) return;
       setGeneratingNext(true);
@@ -367,8 +513,25 @@ const Dashboard = ({ user }: { user: User }) => {
           return { topic: q.topic, question: q.question, answer: q.explanation ? `${correctAnswer}\n\n${q.explanation}` : correctAnswer, mode: "mc" as const, mcOptions: shuffled, mcCorrectIdx: shuffled.indexOf(correctAnswer) };
         });
         setNextQuizQuestions(questions);
+        setQuizQuestions(questions);
+        const today = new Date().toISOString().split("T")[0];
+        try {
+          localStorage.setItem(QUIZ_CACHE_D_KEY, today);
+          localStorage.setItem(QUIZ_CACHE_Q_KEY, JSON.stringify(questions));
+        } catch {}
       });
+    } else {
+      // Free/intermediate: mark daily recap quiz as done, no more today
+      const today = new Date().toISOString().split("T")[0];
+      try { localStorage.setItem(QUIZ_DONE_KEY, today); } catch {}
+      setQuizDoneToday(true);
+      setQuizQuestions(null);
     }
+    // Award quiz XP for everyone
+    addBonusXP(user.id, QUIZ_XP, "quiz");
+    window.dispatchEvent(new CustomEvent("whale-notify", {
+      detail: { message: `+${QUIZ_XP} XP — quiz complete!`, type: "success" },
+    }));
   }, [quiz?.showStats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const QUIZ_DAY_KEY = "gogodeep_quiz_day";
@@ -457,6 +620,65 @@ const Dashboard = ({ user }: { user: User }) => {
     navigate("/report", { state: { diagnosis: data.diagnosis, mode: (data.diagnosis as any)?.mode ?? "guide", scanId } });
   }
 
+  // ── dashboard helpers ────────────────────────────────────────────────────────
+
+  const DAILY_CHALLENGES = [
+    "Find all solutions: |2x − 5| = 9",
+    "Differentiate y = x³ · eˣ using the product rule",
+    "Solve the quadratic: 6x² + x − 2 = 0",
+    "Right triangle — hyp = 13, one leg = 5. Find the missing side.",
+    "Balance this equation: Fe + O₂ → Fe₂O₃",
+    "Evaluate ∫₀³ x² dx step by step",
+    "Convert the recurring decimal 0.̄3 to an exact fraction",
+  ];
+  const DAY_NICKNAMES = ["Sun Grind", "Mot. Mon", "Tough Tue", "Wed Warrior", "Think Thu", "Final Push", "Sat Hustle"];
+  const todayChallenge = DAILY_CHALLENGES[new Date().getUTCDay()];
+  const PILL_COLORS = [
+    "border-blue-500/20 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20",
+    "border-violet-500/20 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20",
+    "border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
+    "border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20",
+    "border-rose-500/20 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20",
+  ];
+
+  const bestDay = !loading && data ? (() => {
+    const counts: Record<string, number> = {};
+    for (const s of data.recentScans) {
+      if (s.created_at) { const d = s.created_at.split("T")[0]; counts[d] = (counts[d] ?? 0) + 1; }
+    }
+    const vals = Object.values(counts);
+    return vals.length ? Math.max(...vals) : 0;
+  })() : 0;
+
+  const blueSpeech = (() => {
+    if (!data) return "Loading your stats...";
+    const { loginStreak, totalScans, usedToday, dailyLimit, weeklyScans } = data;
+    if (totalScans === 0) return "First problem = first win. Drop a screenshot.";
+    const ydayCount = weeklyScans[weeklyScans.length - 2]?.count ?? 1;
+    if (ydayCount === 0 && usedToday === 0) return "Haven't seen you in a day... miss you!";
+    if (usedToday === 0) return "Ready when you are. What's today's problem?";
+    if (dailyLimit && usedToday >= dailyLimit) return "Daily limit hit. Come back tomorrow — streak needs you.";
+    if (loginStreak > 0 && loginStreak % 7 === 0) return `${loginStreak}-day streak. Badge earned!`;
+    const left = dailyLimit ? dailyLimit - usedToday : null;
+    if (left === 1) return "One more scan and you hit today's goal. Let's go.";
+    if (usedToday >= 2) return "On a roll today. Keep stacking.";
+    return "You've got this. Crush the next one.";
+  })();
+
+  const startDailyChallenge = () => {
+    try {
+      sessionStorage.setItem("gogodeep_challenge", todayChallenge);
+      sessionStorage.setItem("gogodeep_challenge_bonus", "1");
+    } catch {}
+    navigate("/workspace");
+  };
+
+  function AchievementBadge({ xp }: { xp: number }) {
+    const lvl = [...LEVELS].reverse().find(l => xp >= l.xpReq) ?? LEVELS[0];
+    if (lvl.level <= 1) return null;
+    return <span className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider" style={{ background: lvl.color, color: lvl.text }}>{lvl.name}</span>;
+  }
+
   return (
     <PageTransition>
       <Helmet>
@@ -464,289 +686,403 @@ const Dashboard = ({ user }: { user: User }) => {
         <meta name="description" content="Trace any difficult question down to its roots with AI. Gogodeep finds the exact error in your STEM working, explains the underlying concept, and builds targeted practice to fix the gap. Free for IB, AP, and A-Level students." />
         <link rel="canonical" href="https://gogodeep.com/dashboard" />
       </Helmet>
-      <div className="relative z-10 min-h-screen pt-8">
-        <div className="container max-w-5xl py-8">
+      {/* Animations */}
+      <style>{`
+        @keyframes blue-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
+        .blue-bob{animation:blue-bob 3.2s ease-in-out infinite}
+        .blue-bubble::after{content:"";position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);border:9px solid transparent;border-top-color:hsl(var(--border));border-bottom:0}
+        .blue-bubble::before{content:"";position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);border:8px solid transparent;border-top-color:hsl(var(--secondary));border-bottom:0;z-index:1}
+        @keyframes hero-in{0%{opacity:0;transform:scale(0.85)}100%{opacity:1;transform:scale(1)}}
+        .hero-in{animation:hero-in 0.45s cubic-bezier(0.22,1,0.36,1) forwards}
+      `}</style>
 
-          {/* Header */}
-          <div className="mb-10 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Dashboard</p>
-              <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-foreground">
-                {[
-                  "Today is your day",
-                  "Make yourself proud today",
-                  "Let's get to work",
-                  "One step closer",
-                  "Show up. Show out",
-                  "Your future self is watching",
-                  "Make today count",
-                  "Time to level up",
-                  "No excuses today",
-                  "Outwork yesterday",
-                ][new Date().getUTCDay() * 3 % 10]}, {username}
-              </h1>
+      {/* Hero overlay — portalled to body so it's above all layout layers */}
+      {heroPhase < 2 && createPortal(
+        <div
+          onClick={() => setHeroPhase(2)}
+          className="fixed inset-0 flex items-center justify-center bg-background px-6 cursor-pointer"
+          style={{
+            zIndex: 9999,
+            opacity: heroPhase === 1 ? 0 : 1,
+            transform: heroPhase === 1 ? "translateY(-40px)" : "translateY(0)",
+            transition: heroPhase === 1 ? "opacity 0.65s ease-in, transform 0.65s ease-in" : undefined,
+            pointerEvents: heroPhase === 1 ? "none" : "auto",
+          }}
+        >
+          <h1 className="hero-in text-center text-6xl sm:text-8xl font-black tracking-tighter text-foreground leading-tight">
+            {GREETING_PHRASES[new Date().getUTCDay() * 4 % 9]},
+            <br /><span className="text-primary">{username}</span>
+          </h1>
+        </div>,
+        document.body
+      )}
+
+      <div
+        className="relative min-h-screen pb-28"
+        style={{
+          opacity: heroPhase >= 1 ? 1 : 0,
+          transform: heroPhase >= 1 ? "translateY(0)" : "translateY(32px)",
+          transition: heroPhase >= 1 ? "opacity 0.7s ease-out, transform 0.7s ease-out" : undefined,
+        }}
+      >
+        <div className="container max-w-6xl py-8">
+
+          {/* Greeting */}
+          <div className="mb-6">
+            <h1 className="text-4xl sm:text-5xl font-black tracking-tighter text-foreground leading-none">
+              {GREETING_PHRASES[new Date().getUTCDay() * 4 % 9]},{" "}
+              <span className="text-primary">{username}</span>
+            </h1>
+          </div>
+
+          {/* ── Level bar + action cards — full width ──────────────── */}
+          <div className="mb-8 flex gap-3 items-stretch">
+
+            {/* Level card */}
+            {!loading && data && (() => {
+              const xp = data.totalXP;
+              const currentLvl = [...LEVELS].reverse().find(l => xp >= l.xpReq) ?? LEVELS[0];
+              const nextLvl = LEVELS.find(l => l.xpReq > xp);
+              const progress = nextLvl
+                ? Math.min(100, ((xp - currentLvl.xpReq) / (nextLvl.xpReq - currentLvl.xpReq)) * 100)
+                : 100;
+              const claimXP = () => {
+                if (dailyClaim.claimed) return;
+                addBonusXP(user.id, dailyClaim.amount, "challenge");
+                const updated = { ...dailyClaim, claimed: true };
+                setDailyClaim(updated);
+                try { localStorage.setItem(DAILY_CLAIM_KEY, JSON.stringify(updated)); } catch {}
+                window.dispatchEvent(new CustomEvent("whale-notify", {
+                  detail: { message: `+${dailyClaim.amount} XP claimed!`, type: "success" },
+                }));
+              };
+              return (
+                <div className="flex-1 min-w-0 rounded-2xl border border-border bg-card p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-3">
+                    <LevelBadge lvl={currentLvl} size={44} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-black text-foreground">{currentLvl.name}</span>
+                          {nextLvl && <span className="text-[10px] font-semibold text-muted-foreground">→ ???</span>}
+                        </div>
+                        <span className="text-sm font-black tabular-nums" style={{ color: currentLvl.color }}>
+                          {xp.toLocaleString()} XP
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-secondary overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-700"
+                          style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${currentLvl.color}cc, ${currentLvl.inner})` }} />
+                      </div>
+                      {nextLvl && <p className="mt-0.5 text-[9px] text-muted-foreground">{(nextLvl.xpReq - xp).toLocaleString()} XP to next</p>}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => navigate("/workspace")}
+                      className="flex-1 rounded-xl bg-amber-400 px-4 py-1.5 text-sm font-black text-black shadow-sm shadow-amber-400/30 transition-all hover:bg-amber-300 hover:scale-[1.02]">
+                      Scan now →
+                    </button>
+                    <button
+                      onClick={claimXP}
+                      disabled={dailyClaim.claimed}
+                      className="flex-1 rounded-xl border border-primary/30 bg-primary/5 px-4 py-1.5 text-sm font-black text-primary transition-all hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {dailyClaim.claimed ? "Claimed ✓" : `Claim +${dailyClaim.amount} XP`}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Daily Challenge mini-card */}
+            <div className="w-[130px] shrink-0 rounded-2xl bg-amber-400 p-3.5 flex flex-col gap-1.5">
+              <span className="text-[9px] font-black uppercase tracking-[0.1em] text-black/60 whitespace-nowrap">Daily Challenge</span>
+              <span className="text-sm font-black text-black leading-none">+{calcScanXP(todayChallenge, null) + CHALLENGE_BONUS_XP} XP</span>
+              <span className="text-[10px] font-semibold text-black/50">5 min</span>
+              <button onClick={startDailyChallenge}
+                className="mt-auto w-full rounded-lg bg-black px-2 py-1.5 text-xs font-black text-amber-400 transition-all hover:bg-black/80 active:scale-95">
+                Start →
+              </button>
             </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => navigate("/workspace")}
-              onKeyDown={(e) => e.key === "Enter" && navigate("/workspace")}
-              onDragEnter={(e) => { e.preventDefault(); setDropHover(true); }}
-              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropHover(false); }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDropHover(false);
-                const file = e.dataTransfer.files[0];
-                if (!file || !ALLOWED_TYPES.includes(file.type)) return;
-                pendingFileStore.set(file);
-                navigate("/workspace");
-              }}
-              className={`mt-4 sm:mt-0 flex cursor-pointer items-center gap-2.5 rounded-xl border-2 border-dashed px-5 py-3 text-sm font-semibold transition-all duration-200 select-none ${
-                dropHover
-                  ? "border-primary bg-primary/10 text-primary shadow-[0_0_16px_hsl(var(--primary)/0.2)] scale-[1.02]"
-                  : "border-primary/40 bg-primary/5 text-primary/70 hover:border-primary hover:text-primary hover:bg-primary/10"
-              }`}
-            >
-              <Upload className="h-4 w-4 shrink-0" />
-              <span>Drop a screenshot or click to scan</span>
+
+            {/* Recap Quiz mini-card */}
+            <div className="w-[130px] shrink-0 rounded-2xl border border-border bg-card p-3.5 flex flex-col gap-1.5">
+              <span className="text-[9px] font-black uppercase tracking-[0.1em] text-muted-foreground whitespace-nowrap">Recap Quiz</span>
+              <span className="text-sm font-black text-foreground leading-none">+{QUIZ_XP} XP</span>
+              <span className="text-[10px] font-semibold text-muted-foreground/60">3–5 min</span>
+              {quizDoneToday && data?.plan !== "deep" ? (
+                <button onClick={() => navigate("/pricing")} className="mt-auto w-full rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs font-black text-primary transition-all hover:bg-primary/10">
+                  Get Deep
+                </button>
+              ) : (data?.recentScans.length ?? 0) < 3 ? (
+                <span className="mt-auto text-[9px] text-muted-foreground">Need {3 - (data?.recentScans.length ?? 0)} more scans</span>
+              ) : quizLoading ? (
+                <div className="mt-auto flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin text-muted-foreground" /></div>
+              ) : (
+                <button onClick={() => startQuiz()} disabled={!quizQuestions?.length}
+                  className="mt-auto w-full rounded-lg bg-primary px-2 py-1.5 text-xs font-black text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-40">
+                  Start →
+                </button>
+              )}
+            </div>
+
+          </div>
+
+          {/* Main layout — left content + Blue floats right */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_260px]">
+
+            {/* ── LEFT CONTENT ─────────────────────────────── */}
+            <div className="min-w-0 space-y-5">
+
+              {/* Stats 2×2 */}
+              <div className="grid grid-cols-2 gap-4">
+
+                {/* Problems Crushed — blue */}
+                <div className="relative overflow-hidden rounded-2xl border-l-4 border-primary bg-primary/10 p-5">
+                  <div className="pointer-events-none absolute -right-5 -bottom-5 opacity-[0.07]">
+                    <svg viewBox="0 0 80 80" className="h-28 w-28 text-primary" fill="none" stroke="currentColor" strokeWidth="4">
+                      <circle cx="40" cy="40" r="12"/><circle cx="40" cy="40" r="26" strokeDasharray="8 4"/>
+                      <line x1="40" y1="4" x2="40" y2="22"/><line x1="40" y1="58" x2="40" y2="76"/>
+                      <line x1="4" y1="40" x2="22" y2="40"/><line x1="58" y1="40" x2="76" y2="40"/>
+                    </svg>
+                  </div>
+                  <div className="flex items-start justify-between gap-1">
+                    <span className="text-xs font-black uppercase tracking-[0.15em] text-primary/80">Problems Crushed</span>
+                    <AchievementBadge xp={data?.totalXP ?? 0} />
+                  </div>
+                  <p className="mt-1 text-[3.5rem] font-black leading-none tracking-tighter text-primary">
+                    {loading ? "—" : data?.totalScans ?? 0}
+                  </p>
+                  <p className="text-[11px] font-semibold text-primary/70">all-time</p>
+                  {!loading && data?.plan !== "deep" && data?.dailyLimit !== null && (
+                    <div className="group/bar relative mt-3">
+                      <div className="flex gap-1">
+                        {Array.from({ length: Math.min(data.dailyLimit as number, 10) }).map((_, i) => (
+                          <div key={i} className={`h-1.5 flex-1 rounded-full transition-all ${i < data.usedToday ? "bg-primary" : "bg-primary/15"}`} />
+                        ))}
+                      </div>
+                      <p className="pointer-events-none absolute -top-6 left-0 whitespace-nowrap rounded-md border border-border bg-card px-2 py-0.5 text-[10px] text-foreground shadow-md opacity-0 transition-opacity group-hover/bar:opacity-100 z-10">
+                        {data.usedToday} / {data.dailyLimit} used today
+                      </p>
+                    </div>
+                  )}
+                  {data?.plan !== "deep" && (
+                    <div className="mt-3">
+                      <button onClick={() => navigate("/pricing")} className="text-[9px] font-black uppercase tracking-wider text-primary/60 underline underline-offset-2 hover:text-primary">Unlock unlimited →</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Current Streak — amber */}
+                <div className="relative overflow-hidden rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-5">
+                  <div className="pointer-events-none absolute -right-3 -bottom-4 opacity-[0.10]">
+                    <svg viewBox="0 0 60 80" className="h-24 w-20 text-amber-500" fill="currentColor">
+                      <path d="M38 2L14 42H28L26 78L52 34H38L38 2Z"/>
+                    </svg>
+                  </div>
+                  <span className="text-xs font-black uppercase tracking-[0.15em] text-amber-700 dark:text-amber-400/70">Current Streak</span>
+                  <div className="mt-1 flex items-end gap-2">
+                    <p className="text-[3.5rem] font-black leading-none tracking-tighter text-amber-600 dark:text-amber-400">
+                      {loading ? "—" : data?.loginStreak ?? 0}
+                    </p>
+                    <p className="mb-1.5 text-sm font-black text-amber-600/60 dark:text-amber-400/50">{(data?.loginStreak ?? 0) !== 1 ? "days" : "day"}</p>
+                  </div>
+                  {!loading && (() => {
+                    const s = data?.loginStreak ?? 0;
+                    if (s === 0) return <p className="text-[11px] font-semibold text-amber-700/60 dark:text-amber-400/50">Start today</p>;
+                    if (s >= 30) return <span className="inline-flex rounded-full px-2 py-0.5 text-[9px] font-black uppercase" style={{background:"#b8860b",color:"#fff"}}>Gold earned</span>;
+                    if (s >= 14) return <p className="text-[11px] font-semibold text-amber-700/70 dark:text-amber-400/60">{30-s} more → gold</p>;
+                    if (s >= 7) return <span className="inline-flex rounded-full px-2 py-0.5 text-[9px] font-black uppercase" style={{background:"#9a5b1e",color:"#fff"}}>Bronze · {14-s} → silver</span>;
+                    return null;
+                  })()}
+                </div>
+
+                {/* Today's Goal — emerald */}
+                <div className="relative overflow-hidden rounded-2xl border-l-4 border-emerald-600 bg-emerald-600/10 p-5">
+                  <div className="pointer-events-none absolute -right-3 -bottom-3 opacity-[0.08]">
+                    <svg viewBox="0 0 24 24" className="h-20 w-20 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/>
+                    </svg>
+                  </div>
+                  <span className="text-xs font-black uppercase tracking-[0.15em] text-emerald-700 dark:text-emerald-400/60">Today's Goal</span>
+                  <div className="mt-1 flex items-end gap-2">
+                    <p className="text-[3.5rem] font-black leading-none tracking-tighter text-emerald-700 dark:text-emerald-400">
+                      {loading ? "—" : data?.usedToday ?? 0}
+                    </p>
+                    {!editingGoal ? (
+                      <div className="mb-1.5 flex items-center gap-1">
+                        <p className="text-sm font-black text-emerald-700/50 dark:text-emerald-400/50">/ {dailyGoal}</p>
+                        <button
+                          onClick={() => { setGoalDraft(String(dailyGoal)); setEditingGoal(true); }}
+                          className="rounded-md p-0.5 text-emerald-400/40 transition-colors hover:text-emerald-400"
+                          title="Edit goal"
+                        >
+                          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M11.5 2.5a1.414 1.414 0 0 1 2 2L5 13H2v-3L11.5 2.5z"/>
+                          </svg>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mb-1.5 flex items-center gap-1">
+                        <span className="text-sm font-black text-emerald-700/50 dark:text-emerald-400/50">/</span>
+                        <input
+                          autoFocus
+                          type="number"
+                          min={1}
+                          max={99}
+                          value={goalDraft}
+                          onChange={(e) => setGoalDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const v = Math.max(1, Math.min(99, parseInt(goalDraft) || 5));
+                              setDailyGoal(v);
+                              try { localStorage.setItem(GOAL_KEY, String(v)); } catch {}
+                              setEditingGoal(false);
+                            }
+                            if (e.key === "Escape") setEditingGoal(false);
+                          }}
+                          onBlur={() => {
+                            const v = Math.max(1, Math.min(99, parseInt(goalDraft) || 5));
+                            setDailyGoal(v);
+                            try { localStorage.setItem(GOAL_KEY, String(v)); } catch {}
+                            setEditingGoal(false);
+                          }}
+                          className="w-10 rounded-md bg-emerald-400/20 px-1.5 py-0.5 text-center text-xs font-black text-emerald-400 outline-none focus:bg-emerald-400/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[11px] font-semibold text-emerald-700/60 dark:text-emerald-400/60">
+                    {!loading && data
+                      ? (data.usedToday >= dailyGoal) ? "Goal smashed!"
+                      : data.usedToday === 0 ? "Let's get started"
+                      : `${dailyGoal - data.usedToday} more to go`
+                      : ""}
+                  </p>
+                </div>
+
+                {/* All-Time Best Day — violet, shown in XP */}
+                <div className="relative overflow-hidden rounded-2xl border-l-4 border-violet-600 bg-violet-600/10 p-5">
+                  <div className="pointer-events-none absolute -right-3 -bottom-2 opacity-[0.08]">
+                    <svg viewBox="0 0 24 24" className="h-20 w-20 text-violet-600" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M7 3h10v7a5 5 0 0 1-10 0V3z"/>
+                      <path d="M7 5H4a2 2 0 0 0-2 2v1a3 3 0 0 0 3 3h2"/><path d="M17 5h3a2 2 0 0 1 2 2v1a3 3 0 0 1-3 3h-2"/>
+                      <line x1="12" y1="15" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/>
+                    </svg>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-[0.15em] text-violet-700 dark:text-violet-400/60">Best Day Ever</span>
+                    {!loading && (data?.todayXP ?? 0) > 0 && (
+                      <span className="text-sm font-black text-violet-700/80 dark:text-violet-400">Today {(data!.todayXP).toLocaleString()} XP</span>
+                    )}
+                  </div>
+                  <div className="mt-1 flex items-end gap-1">
+                    <p className="text-[3.5rem] font-black leading-none tracking-tighter text-violet-700 dark:text-violet-400">
+                      {loading ? "—" : (data?.bestDayXP ?? 0).toLocaleString()}
+                    </p>
+                    {!loading && (data?.bestDayXP ?? 0) > 0 && (
+                      <p className="mb-1.5 text-sm font-black text-violet-700/50 dark:text-violet-400/60">XP</p>
+                    )}
+                  </div>
+                  <p className="text-[11px] font-semibold text-violet-700/60 dark:text-violet-400/60">in a single day</p>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* ── RIGHT: Blue — free-floating, no panel ───── */}
+            <div className="flex flex-col items-center justify-start gap-5 pt-2">
+
+              {/* Speech bubble */}
+              <div className="relative">
+                <div className="rounded-[18px] border-2 border-border bg-card px-5 py-3.5 text-center text-sm font-bold text-foreground shadow-[0_8px_32px_hsl(var(--primary)/0.10)] max-w-[210px]">
+                  {loading ? "…" : blueSpeech}
+                </div>
+                <div className="absolute -bottom-[13px] left-1/2 -translate-x-1/2 h-0 w-0 border-l-[10px] border-r-[10px] border-t-[14px] border-l-transparent border-r-transparent" style={{borderTopColor:"hsl(var(--border))"}} />
+                <div className="absolute -bottom-[11px] left-1/2 -translate-x-1/2 h-0 w-0 border-l-[9px] border-r-[9px] border-t-[12px] border-l-transparent border-r-transparent" style={{borderTopColor:"hsl(var(--card))"}} />
+              </div>
+
+              {/* Blue — big, free */}
+              <img
+                src="/blue.png"
+                alt="Blue"
+                draggable={false}
+                className="blue-bob w-full max-w-[240px] object-contain select-none -mt-2"
+                style={{filter:"drop-shadow(0 16px 40px hsl(var(--primary)/0.20))"}}
+              />
+
+              {data?.plan !== "deep" && (
+                <button onClick={() => navigate("/pricing")} className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">
+                  Upgrade →
+                </button>
+              )}
+
             </div>
           </div>
 
-          {/* First-scan onboarding banner */}
-          {!loading && data?.totalScans === 0 && (
-            <div className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl border border-primary/30 bg-primary/5 px-5 py-4">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Do your first scan now</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Screenshot a problem you're stuck on, and get a full breakdown in seconds.</p>
+          {/* ── Full-width: weekly chart + quote ───────────── */}
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <div className="flex items-start justify-between gap-6 mb-4">
+              <div className="shrink-0">
+                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground">This Week's Power</p>
+                <p className="mt-1 text-4xl font-black tracking-tighter text-foreground">
+                  {loading ? "—" : (data?.weeklyScans ?? []).reduce((s, d) => s + d.count, 0)}
+                  <span className="ml-2 text-sm font-semibold text-muted-foreground">scans</span>
+                </p>
               </div>
-              <Button className="bg-primary hover:bg-primary/90 shrink-0 h-10 px-6 text-sm font-semibold" onClick={() => navigate("/workspace")}>
-                Do your first scan →
-              </Button>
+              {(() => {
+                const day = new Date().getUTCFullYear() * 1000 + Math.floor((Date.now() - new Date(new Date().getUTCFullYear(), 0, 0).getTime()) / 86400000);
+                const q = QUOTES[(day + quoteOffset) % QUOTES.length];
+                return (
+                  <div className="flex-1 text-right">
+                    <div className="flex items-start justify-end gap-2">
+                      <button onClick={() => setQuoteOffset(v => (v + 1) % QUOTES.length)}
+                        className="shrink-0 rounded-full p-1 text-muted-foreground/30 hover:text-muted-foreground transition-colors mt-1">
+                        <RefreshCw className="h-3 w-3" />
+                      </button>
+                      <p className="text-2xl font-black italic leading-snug text-foreground">"{q.text}"</p>
+                    </div>
+                    {q.author && q.author !== "Anonymous" && <p className="mt-1.5 text-xs font-semibold text-muted-foreground/60">— {q.author}</p>}
+                  </div>
+                );
+              })()}
             </div>
-          )}
-
-          {/* Stat row */}
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-
-            {/* Total scans */}
-            <Card className="border-border bg-card p-6 flex flex-col">
-              <div className="flex items-center gap-2">
-                <Microscope className="h-4 w-4 text-primary" />
-                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Total Scans</p>
-              </div>
-              <p className="mt-4 text-5xl font-extrabold tracking-tight text-foreground">
-                {loading ? "—" : data?.totalScans ?? 0}
-              </p>
-              <p className="mt-1.5 text-xs text-muted-foreground">All-time diagnoses</p>
-              {!loading && data?.plan !== "deep" && data?.dailyLimit !== null && (
-                <div className="mt-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-muted-foreground">{data.usedToday} / {data.dailyLimit} used today</span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all duration-300"
-                      style={{ width: `${Math.min(100, ((data.usedToday) / (data.dailyLimit as number)) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              <div className="mt-4">
-                {data?.plan === "deep" ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-yellow-400/20 dark:bg-yellow-400/15 px-2.5 py-1 text-[11px] font-semibold text-yellow-600 dark:text-yellow-400 ring-1 ring-yellow-400/40 dark:ring-yellow-400/20">
-                    Deep plan active
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => navigate("/pricing", { state: { backgroundLocation: location } })}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
-                  >
-                    Unlock unlimited scans →
-                  </button>
-                )}
-              </div>
-            </Card>
-
-            {/* Login streak */}
-            <Card className="border-border bg-card p-6 flex flex-col">
-              <div className="flex items-center gap-2">
-                <Flame className="h-4 w-4 text-primary" />
-                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Login Streak</p>
-              </div>
-              <p className="mt-4 text-5xl font-extrabold tracking-tight text-foreground">
-                {loading ? "—" : data?.loginStreak ?? 0}
-                <span className="ml-2 text-lg font-medium text-muted-foreground">days</span>
-              </p>
-              <p className="mt-1.5 text-xs text-muted-foreground">Keep the habit going</p>
-              <div className="mt-4">
-                <button
-                  onClick={() => navigate("/workspace")}
-                  className="rounded-lg border border-border bg-secondary/50 px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-secondary hover:border-primary/40"
-                >
-                  Do a scan now →
-                </button>
-              </div>
-            </Card>
-
-            {/* Weekly scan chart */}
-            <Card className="border-border bg-card p-6">
-              <div className="flex items-center gap-2">
-                <ScanLine className="h-4 w-4 text-primary" />
-                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">This Week</p>
-              </div>
-              <p className="mt-4 text-5xl font-extrabold tracking-tight text-foreground">
-                {loading ? "—" : (data?.weeklyScans ?? []).reduce((s, d) => s + d.count, 0)}
-              </p>
-              <p className="mt-1.5 text-xs text-muted-foreground">Scans in the last 7 days</p>
-              <div className="mt-4 h-16">
-                {!loading && data && (
+            <div className="h-28">
+              {!loading && data && (() => {
+                const MOCK = [1, 3, 2, 0, 4, 2, 1];
+                const isAllZero = data.weeklyScans.every(d => d.count === 0);
+                const chartData = data.weeklyScans.map((d, i) => ({
+                  ...d,
+                  count: isAllZero ? MOCK[i] ?? 0 : d.count,
+                }));
+                return (
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.weeklyScans} barSize={12} margin={{ top: 0, right: 0, left: -28, bottom: 0 }}>
+                    <BarChart data={chartData} barSize={16} margin={{ top: 0, right: 0, left: -32, bottom: 0 }}>
                       <Tooltip
-                        cursor={{ fill: "hsl(var(--primary)/0.08)" }}
-                        content={({ active, payload }) =>
-                          active && payload?.length ? (
-                            <div className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-foreground shadow-md">
-                              {payload[0].value} scan{Number(payload[0].value) !== 1 ? "s" : ""}
+                        cursor={{ fill: "rgba(99,102,241,0.07)" }}
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null;
+                          const val = Number(payload[0]?.value ?? 0);
+                          return (
+                            <div style={{ background: "rgba(15,23,42,0.92)", color: "#f8fafc", borderRadius: 7, padding: "5px 11px", fontSize: 12, fontWeight: 700, pointerEvents: "none", whiteSpace: "nowrap" }}>
+                              {isAllZero ? "no data yet" : `${val} scan${val !== 1 ? "s" : ""}`}
                             </div>
-                          ) : null
-                        }
+                          );
+                        }}
                       />
-                      <XAxis dataKey="day" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                      <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                        {data.weeklyScans.map((entry, i) => (
-                          <Cell key={i} fill={entry.count > 0 ? "hsl(var(--primary))" : "hsl(var(--secondary))"} />
+                      <XAxis dataKey="day" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))", fontWeight: 700 }} axisLine={false} tickLine={false} />
+                      <Bar dataKey="count" radius={[5, 5, 0, 0]}>
+                        {chartData.map((entry, i) => (
+                          <Cell key={i} fill={entry.count > 0 ? (isAllZero ? "hsl(var(--primary)/0.3)" : "hsl(var(--primary))") : "hsl(var(--secondary))"} />
                         ))}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
-                )}
-              </div>
-            </Card>
+                );
+              })()}
+            </div>
           </div>
-
-          {/* Main content */}
-          <div className="grid gap-6 lg:grid-cols-5">
-
-            {/* Previous scans — wider */}
-            <Card className="border-border bg-card pt-5 px-5 pb-0 lg:col-span-3">
-              <div className="mb-4 flex items-center gap-2">
-                <BookOpen className="h-4 w-4 text-primary" />
-                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Previous Scans</p>
-              </div>
-              {loading ? (
-                <div className="space-y-2 pb-5">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-11 w-full rounded-lg bg-secondary animate-pulse" />
-                  ))}
-                </div>
-              ) : !data?.recentScans.length ? (
-                <div className="flex flex-col items-center justify-center py-8 pb-5 text-center">
-                  <BookOpen className="h-8 w-8 text-muted-foreground/30" />
-                  <p className="mt-3 text-sm text-muted-foreground">Your scans will appear here after your first diagnosis.</p>
-                  <Link to="/workspace" className="mt-4 inline-block">
-                    <Button size="sm" className="gap-2 bg-primary hover:bg-primary/90">
-                      <ScanLine className="h-3.5 w-3.5" />
-                      Run first scan
-                    </Button>
-                  </Link>
-                </div>
-              ) : (
-                <div className="relative">
-                  <div
-                    ref={scanScrollRef}
-                    onScroll={() => {
-                      const el = scanScrollRef.current;
-                      if (el) setScanAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 4);
-                    }}
-                    className="max-h-[12.5rem] overflow-y-auto space-y-2 pr-1 pb-4"
-                  >
-                    {data.recentScans.map((scan) => (
-                      <button
-                        key={scan.id}
-                        onClick={() => handleScanClick(scan.id)}
-                        className="flex w-full items-center justify-between rounded-lg border border-border bg-secondary/60 px-4 py-3 text-left transition-all duration-150 hover:bg-secondary hover:border-primary/30 hover:translate-x-0.5"
-                      >
-                        <span className="truncate text-sm font-medium text-foreground">{scan.label}</span>
-                        <ChevronRight className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
-                    ))}
-                  </div>
-                  {data.recentScans.length > 3 && !scanAtBottom && (
-                    <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-card to-transparent" />
-                  )}
-                </div>
-              )}
-            </Card>
-
-            {/* Quick Recap Quiz */}
-            <Card className="border-border bg-card pt-5 px-5 pb-0 lg:col-span-2">
-              <div className="mb-4 flex items-center gap-2">
-                <BrainCircuit className="h-4 w-4 text-primary" />
-                <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Quick Recap Quiz</p>
-              </div>
-              <div className="pb-5">
-                {(data?.recentScans.length ?? 0) < 3 ? (
-                  <div className="flex flex-col items-center gap-2 py-5 text-center">
-                    <BrainCircuit className="h-7 w-7 text-muted-foreground/30" />
-                    <p className="text-sm text-muted-foreground">Need at least 3 scans to start.</p>
-                    <p className="text-xs text-muted-foreground/60">{data?.recentScans.length ?? 0} / 3 so far</p>
-                  </div>
-                ) : quizLoading ? (
-                  <div className="flex items-center justify-center gap-2 py-8">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">Preparing quiz…</span>
-                  </div>
-                ) : quizQuestions?.length ? (
-                  <div className="space-y-3">
-                    <div className="relative overflow-hidden" style={{ maxHeight: "11rem" }}>
-                      <div className="space-y-2">
-                        {quizQuestions.slice(0, 3).map((q, i) => (
-                          <div key={i} className="rounded-lg border border-border bg-secondary/40 px-3 py-2.5">
-                            <p className="text-[10px] font-semibold uppercase tracking-widest text-primary mb-1">{q.topic}</p>
-                            <p className="text-xs text-foreground"><RichText text={q.question} /></p>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-card to-transparent" />
-                    </div>
-                    <Button size="sm" className="w-full bg-primary hover:bg-primary/90 h-8 text-xs" onClick={() => startQuiz()}>
-                      Start Quiz
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 py-5 text-center">
-                    <BrainCircuit className="h-7 w-7 text-muted-foreground/30" />
-                    <p className="text-sm text-muted-foreground">Could not load quiz questions. Try refreshing.</p>
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-
-          {/* Quote of the day */}
-          {(() => {
-            const day = new Date().getUTCFullYear() * 1000 + Math.floor((Date.now() - new Date(new Date().getUTCFullYear(), 0, 0).getTime()) / 86400000);
-            const q = QUOTES[(day + quoteOffset) % QUOTES.length];
-            return (
-              <div className="mt-6 rounded-xl border border-border bg-card px-6 py-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="text-center flex-1">
-                    <p className="text-sm italic text-muted-foreground">"{q.text}"</p>
-                    {q.author && q.author !== "Anonymous" && <p className="mt-2 text-xs font-semibold text-muted-foreground/60">— {q.author}</p>}
-                  </div>
-                  <button
-                    onClick={() => setQuoteOffset((v) => (v + 1) % QUOTES.length)}
-                    className="shrink-0 rounded-full p-1.5 text-muted-foreground/50 transition-colors hover:bg-secondary hover:text-muted-foreground"
-                    title="New quote"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            );
-          })()}
 
         </div>
       </div>
@@ -1072,10 +1408,6 @@ const DemoPanel = () => {
           <div className="flex h-full flex-col items-center justify-center gap-5 p-8">
             <ScreenshotCard dimmed />
             <div className="w-56">
-              <div className="mb-2 flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                <span className="text-sm text-muted-foreground transition-all duration-300">{LOADING_MSGS[loadingMsgIdx]}</span>
-              </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
                 <div className="h-full rounded-full bg-primary animate-loading-fill" />
               </div>
@@ -1226,7 +1558,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Is it really free?",
-    a: "Yes, Gogodeep is free to use. There is also a paid Deep plan that unlocks unlimited scans, unlimited Whal-E use, and unlimited practice questions.",
+    a: "Yes, Gogodeep is free to use. There is also a paid Deep plan that unlocks unlimited scans, unlimited Blue use, and unlimited practice questions.",
   },
   {
     q: "Will it just give me the answer?",

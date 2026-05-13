@@ -121,7 +121,7 @@ export default function Settings() {
               ) : (
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
-                    <img src="/whale-e.png" alt="" className="whale-img h-10 w-10 object-contain shrink-0" />
+                    <img src="/blue.png" alt="" draggable={false} className="whale-img h-10 w-10 object-contain shrink-0" />
                     <div>
                       <p className="text-sm font-semibold text-foreground">Go Deep</p>
                       <p className="text-xs text-muted-foreground">from $6 / month</p>

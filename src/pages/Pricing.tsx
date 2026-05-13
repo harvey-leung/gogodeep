@@ -13,7 +13,7 @@ const FEATURES = [
   "Unlimited scans",
   "Unlimited practice questions",
   "Unlimited recap quizzes",
-  "Unlimited Whal-E use",
+  "Unlimited Blue use",
 ];
 
 const Pricing = () => {
@@ -99,8 +99,9 @@ const Pricing = () => {
             {/* Hero — whale + title */}
             <div className="flex flex-col items-center pt-8 pb-5 px-8 text-center">
               <img
-                src="/whale-e.png"
+                src="/blue.png"
                 alt=""
+                draggable={false}
                 className="whale-img h-24 w-24 object-contain mb-4"
                 style={{ filter: "drop-shadow(0 8px 24px hsl(var(--primary)/0.35))" }}
               />

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { cn } from "@/lib/utils";
 import { RichText } from "@/components/RichText";
 
-const WHALE_IMG = "/whale-e.png";
+const WHALE_IMG = "/blue.png";
 const WHALE_CREDIT_LIMIT = 100;
 
 function CreditCircle({ used, limit }: { used: number; limit: number }) {
@@ -46,29 +46,29 @@ function WhaleAvatar({ className }: { className?: string }) {
   return err ? (
     <span className={cn("flex items-center justify-center rounded-full bg-primary/10 text-lg", className)}>🐋</span>
   ) : (
-    <img src={WHALE_IMG} alt="Whal-E" onError={() => setErr(true)} className={cn("whale-img rounded-full object-cover", className)} />
+    <img src={WHALE_IMG} alt="Blue" draggable={false} onError={() => setErr(true)} className={cn("whale-img rounded-full object-cover", className)} />
   );
 }
 
 type Message = { role: "user" | "assistant"; content: string };
 
-const SYSTEM_PROMPT = `You are Whal-E, the friendly assistant inside Gogodeep — a study tool that helps students diagnose errors in their work and master the underlying concepts.
+const SYSTEM_PROMPT = `You are Blue, the study assistant inside Gogodeep. Your job: give crystal-clear, step-by-step explanations that make students go "oh, NOW I get it."
 
-How Gogodeep works:
-- Workspace (/workspace): Students upload a photo of a question they're stuck on, or their working for a tough problem. They choose between "Guide me" (step-by-step solution) or "Find my error" (pinpoints what went wrong).
-- Report page (/report): After a scan, results appear in three tabs — "Step by Step" (guided solution), "Concept" (the underlying concept explained), and "Practice" (tailored practice questions with reveal-answer buttons). Practice questions also have a "Scan this question" button to run a new scan on them.
-- Sidebar: Scan history is saved here. Scans can be organised into colour-coded folders. Clicking a past scan reopens its report.
-- Dashboard (/): Shows total scans, daily credits remaining with a countdown to reset, login streak with a 7-day bonus progress bar, a Recap Quiz (Intermediate/Deep only — 2 questions from each of your last 5 scans), and a quote of the day.
-- Pricing (/pricing): Free (3 scans/day, 10 bonus credits on 7-day streak), Intermediate (10 scans/day, Whal-E chat, 20 bonus credits on 7-day streak), Deep (unlimited scans, Whal-E chat, streak display).
+Rules:
+- Be direct. Get to the point in the first sentence. No filler, no "Great question!"
+- Show every step. Never skip algebra or logic. One transformation per line.
+- Use plain language first, then introduce the formal name.
+- Use $...$ for inline math and $$...$$ for display equations — always.
+- If a student is stuck: diagnose exactly where they went wrong, then walk them forward.
+- Keep a slightly quirky, encouraging tone — but never at the expense of clarity.
+- If asked something off-topic, say so briefly and redirect to studying.
 
-Your role:
-- Answer questions about academic concepts (maths, physics, chemistry, biology, etc.) clearly and step by step
-- Help users navigate and understand Gogodeep's features
-- Keep responses concise and student-friendly
-- Encourage students when they're stuck
-- If asked something off-topic, gently redirect to studying or Gogodeep`;
+Gogodeep features (for navigation questions):
+- Workspace: upload a screenshot or type a question → step-by-step solution
+- Report: Step by Step / Concept / Practice tabs
+- Dashboard: scan history, streak, recap quiz`;
 
-const GREETING = "Hey! I'm Whal-E 👋 Ask me anything about a concept you're studying, or how to use Gogodeep.";
+const GREETING = "Hey! I'm Blue 👋 Ask me anything — a concept you're stuck on, a question, or how Gogodeep works.";
 
 const DEFAULT_W = 340;
 const DEFAULT_H = 460;
@@ -325,7 +325,7 @@ export default function WhaleAssistant() {
         setWhaleCreditsUsed(WHALE_CREDIT_LIMIT);
         setMessages((prev) => [...prev, {
           role: "assistant",
-          content: "You've reached your daily Whal-E limit. Come back tomorrow, or upgrade to Deep for unlimited chats.",
+          content: "You've reached your daily Blue limit. Come back tomorrow, or upgrade to Deep for unlimited chats.",
         }]);
         return;
       }
@@ -346,7 +346,7 @@ export default function WhaleAssistant() {
 
   return (
     <>
-      {/* Whal-E speech bubble notification */}
+      {/* Blue speech bubble notification */}
       {bubble && (
         <div className={cn(
           "fixed bottom-24 right-6 z-50 duration-300",
@@ -372,7 +372,7 @@ export default function WhaleAssistant() {
       {/* Floating button */}
       <button
         onClick={handleOpen}
-        title={open ? "Close" : "Ask Whal-E"}
+        title={open ? "Close" : "Ask Blue"}
         className={cn(
           "group fixed bottom-6 right-6 z-50 flex h-14 items-center overflow-hidden rounded-full border border-border bg-card shadow-xl transition-all duration-300 ease-out",
           !open && !justClosed && "hover:pl-5"
@@ -382,7 +382,7 @@ export default function WhaleAssistant() {
           "max-w-0 overflow-hidden whitespace-nowrap text-sm font-semibold text-foreground transition-all duration-300 ease-out",
           !open && !justClosed && "group-hover:max-w-[100px] group-hover:pr-1"
         )}>
-          Ask Whal-E
+          Ask Blue
         </span>
         <div className="relative h-14 w-14 shrink-0">
           <WhaleAvatar className="h-14 w-14 p-1" />
@@ -403,12 +403,12 @@ export default function WhaleAssistant() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3 text-foreground">
               <WhaleAvatar className="h-9 w-9 shrink-0" />
-              {upgradeLimitMode ? "Daily limit reached" : "Meet Whal-E"}
+              {upgradeLimitMode ? "Daily limit reached" : "Meet Blue"}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {upgradeLimitMode
-                ? "You've used all your daily Whal-E messages. Upgrade to Deep for unlimited chats — no daily cap, ever."
-                : "Whal-E is your personal study assistant — ask him anything about a concept, a question you're stuck on, or how to navigate Gogodeep. Available on Intermediate and Deep plans."}
+                ? "You've used all your daily Blue messages. Upgrade to Deep for unlimited chats — no daily cap, ever."
+                : "Blue is your personal study assistant — ask him anything about a concept, a question you're stuck on, or how to navigate Gogodeep. Available on Intermediate and Deep plans."}
             </DialogDescription>
           </DialogHeader>
           <div className="mt-4 flex justify-end">
@@ -445,7 +445,7 @@ export default function WhaleAssistant() {
           >
             <div className="flex items-center gap-2.5">
               <WhaleAvatar className="h-8 w-8 shrink-0" />
-              <p className="text-sm font-semibold text-foreground">Whal-E</p>
+              <p className="text-sm font-semibold text-foreground">Blue</p>
             </div>
             <div className="flex items-center gap-1">
               <button

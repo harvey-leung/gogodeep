@@ -22,6 +22,7 @@ import { FREE_FOR_ALL } from "@/lib/featureFlags";
 import { scanImageStore } from "@/lib/pendingFile";
 import { whaleToast } from "@/lib/whaleToast";
 import { cn } from "@/lib/utils";
+import { calcScanXP } from "@/lib/xp";
 
 const SESSION_REPORT_KEY = "gogodeep_pending_report";
 
@@ -278,8 +279,8 @@ function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadi
                     onClick={() => onAskWhale(`Help me understand this practice question: ${p.question}`)}
                     className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
                   >
-                    <img src="/whale-e.png" alt="" className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
-                    Ask Whal-E about this question
+                    <img src="/blue.png" alt="" draggable={false} className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
+                    Ask Blue about this question
                   </button>
                 </div>
               )}
@@ -431,8 +432,8 @@ function ConceptTab({
                       onClick={() => onAskWhale(askText)}
                       className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
                     >
-                      <img src="/whale-e.png" alt="" className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
-                      Ask Whal-E
+                      <img src="/blue.png" alt="" draggable={false} className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
+                      Ask Blue
                     </button>
                   </div>
                 </>
@@ -494,10 +495,10 @@ function IdentifyErrorTab({ diagnosis }: { diagnosis: IdentifyDiagnosis }) {
 
 // ── Steps tab ─────────────────────────────────────────────────────────────────
 
-// ── Whal-E markdown renderer ─────────────────────────────────────────────────
+// ── Blue markdown renderer ─────────────────────────────────────────────────
 
 function InlineMd({ text }: { text: string }) {
-  const parts = text.split(/(\*\*[^*]+\*\*|\$[^$]+\$)/g);
+  const parts = text.split(/(\$\$[^$]+\$\$|\*\*[^*]+\*\*|\$[^$]+\$)/g);
   return (
     <>
       {parts.map((part, i) => {
@@ -518,11 +519,11 @@ function WhaleMd({ text }: { text: string }) {
   while (i < lines.length) {
     const line = lines[i];
     if (line.startsWith("### ")) {
-      nodes.push(<p key={i} className="mt-2 mb-0.5 text-xs font-semibold text-foreground">{line.slice(4)}</p>);
+      nodes.push(<p key={i} className="mt-2 mb-0.5 text-xs font-semibold text-foreground"><InlineMd text={line.slice(4)} /></p>);
     } else if (line.startsWith("## ")) {
-      nodes.push(<p key={i} className="mt-3 mb-1 text-xs font-bold uppercase tracking-wide text-primary first:mt-0">{line.slice(3)}</p>);
+      nodes.push(<p key={i} className="mt-3 mb-1 text-xs font-bold uppercase tracking-wide text-primary first:mt-0"><InlineMd text={line.slice(3)} /></p>);
     } else if (line.startsWith("# ")) {
-      nodes.push(<p key={i} className="mt-3 mb-1 text-xs font-bold uppercase tracking-wide text-primary first:mt-0">{line.slice(2)}</p>);
+      nodes.push(<p key={i} className="mt-3 mb-1 text-xs font-bold uppercase tracking-wide text-primary first:mt-0"><InlineMd text={line.slice(2)} /></p>);
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
       const items: string[] = [];
       while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("* "))) {
@@ -550,7 +551,7 @@ function WhaleMd({ text }: { text: string }) {
   return <div className="space-y-0.5">{nodes}</div>;
 }
 
-// ── Whal-E inline chat ────────────────────────────────────────────────────────
+// ── Blue inline chat ────────────────────────────────────────────────────────
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
@@ -671,7 +672,7 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
       });
       if ((data as any)?.error === "daily_limit_reached") {
         setCreditsUsed(WHALE_CREDIT_LIMIT);
-        setMessages((prev) => [...prev, { role: "assistant", content: "You've reached your daily Whal-E limit. Come back tomorrow, or upgrade to Deep for unlimited chats." }]);
+        setMessages((prev) => [...prev, { role: "assistant", content: "You've reached your daily Blue limit. Come back tomorrow, or upgrade to Deep for unlimited chats." }]);
         setLoading(false);
         return;
       }
@@ -689,8 +690,8 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <img src="/whale-e.png" alt="" className="whale-img h-5 w-5 object-contain" />
-          <span className="text-sm font-semibold text-foreground">Whal-E</span>
+          <img src="/blue.png" alt="" draggable={false} className="whale-img h-5 w-5 object-contain" />
+          <span className="text-sm font-semibold text-foreground">Blue</span>
         </div>
         <button
           onClick={onClose}
@@ -775,11 +776,11 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
         <DialogContent className="border border-border bg-card sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-foreground">
-              <img src="/whale-e.png" alt="" className="whale-img h-7 w-7 object-contain" />
+              <img src="/blue.png" alt="" draggable={false} className="whale-img h-7 w-7 object-contain" />
               Daily limit reached
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              You've used all your daily Whal-E messages. Upgrade to Deep for unlimited chats — no daily cap, ever.
+              You've used all your daily Blue messages. Upgrade to Deep for unlimited chats — no daily cap, ever.
             </DialogDescription>
           </DialogHeader>
           <div className="mt-4 flex justify-end">
@@ -856,8 +857,8 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
                       onClick={() => onAskWhale(`Explain step ${i + 1}: ${step}`)}
                       className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
                     >
-                      <img src="/whale-e.png" alt="" className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
-                      Ask Whal-E about this step
+                      <img src="/blue.png" alt="" draggable={false} className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
+                      Ask Blue about this step
                     </button>
                   </div>
                 )}
@@ -939,8 +940,8 @@ const BlindSpotReport = () => {
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, []);
 
-  // Editable scan title
-  const [scanTitle, setScanTitle] = useState<string>(() => {
+  // Editable scan title — also syncs when navigating between scans
+  const derivedTitle = () => {
     if (scanId) {
       try {
         const labState = JSON.parse(localStorage.getItem("gogodeep_lab_v1") ?? "{}");
@@ -948,7 +949,9 @@ const BlindSpotReport = () => {
       } catch { /* ignore */ }
     }
     return (diagnosis as any)?.concept_label ?? (diagnosis as any)?.question_summary ?? "Scan";
-  });
+  };
+  const [scanTitle, setScanTitle] = useState<string>(derivedTitle);
+  useEffect(() => { setScanTitle(derivedTitle()); }, [scanId, (diagnosis as any)?.concept_label, (diagnosis as any)?.question_summary]); // eslint-disable-line react-hooks/exhaustive-deps
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
 
@@ -1151,29 +1154,39 @@ const BlindSpotReport = () => {
   const effectiveRecognitionCue = lazyConceptData?.recognition_cue ?? (diagnosis as any)?.recognition_cue;
   const relatedModels = findRelatedModels(diagnosis);
 
+  const scanXP = calcScanXP(
+    (diagnosis as any)?.concept_label ?? (diagnosis as any)?.question_summary ?? null,
+    (diagnosis as any)?.error_category ?? null
+  );
+
   const titleHeaderContent = (
-    <div className="min-w-0 flex-1">
-      {titleEditing ? (
-        <input
-          autoFocus
-          value={titleDraft}
-          onChange={(e) => setTitleDraft(e.target.value)}
-          onBlur={commitTitleRename}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitTitleRename();
-            if (e.key === "Escape") setTitleEditing(false);
-          }}
-          className="w-full bg-transparent text-2xl font-bold tracking-tight text-foreground outline-none border-b border-primary"
-        />
-      ) : (
-        <h1
-          onClick={startTitleEdit}
-          title={scanId ? "Click to rename" : undefined}
-          className={cn("truncate text-2xl font-bold tracking-tight text-foreground", scanId && "cursor-text hover:text-primary/80 transition-colors")}
-        >
-          {scanTitle}
-        </h1>
-      )}
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="min-w-0 flex-1">
+        {titleEditing ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={commitTitleRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitTitleRename();
+              if (e.key === "Escape") setTitleEditing(false);
+            }}
+            className="w-full bg-transparent text-2xl font-bold tracking-tight text-foreground outline-none border-b border-primary"
+          />
+        ) : (
+          <h1
+            onClick={startTitleEdit}
+            title={scanId ? "Click to rename" : undefined}
+            className={cn("truncate text-2xl font-bold tracking-tight text-foreground", scanId && "cursor-text hover:text-primary/80 transition-colors")}
+          >
+            {scanTitle}
+          </h1>
+        )}
+      </div>
+      <span className="shrink-0 rounded-full bg-primary/10 px-3 py-1 text-sm font-black text-primary">
+        +{scanXP} XP
+      </span>
     </div>
   );
 
@@ -1289,7 +1302,7 @@ const BlindSpotReport = () => {
           }}
         />
 
-        {/* ── Right: Whal-E chat ───────────────────────────────────────────── */}
+        {/* ── Right: Blue chat ───────────────────────────────────────────── */}
         <div
           ref={rightPaneRef}
           style={{ width: whaleOpen ? `calc(${100 - splitLeft}% - 6px)` : "0" }}
@@ -1298,7 +1311,7 @@ const BlindSpotReport = () => {
           <WhaleChatPanel diagnosis={diagnosis} onClose={() => setWhaleOpen(false)} pendingMessage={pendingWhaleMessage} onMessageHandled={() => setPendingWhaleMessage(null)} plan={plan} />
         </div>
 
-        {/* ── Pull tab when Whal-E is closed ───────────────────────────────── */}
+        {/* ── Pull tab when Blue is closed ───────────────────────────────── */}
         <div
           className={cn(
             "absolute right-0 top-1/2 z-20 -translate-y-1/2 transition-all duration-300",
@@ -1307,10 +1320,10 @@ const BlindSpotReport = () => {
         >
           <button
             onClick={() => setWhaleOpen(true)}
-            title="Open Whal-E"
+            title="Open Blue"
             className="flex flex-col items-center gap-2 rounded-l-xl border border-r-0 border-border bg-card px-2 py-5 shadow-lg transition-colors hover:bg-secondary"
           >
-            <img src="/whale-e.png" alt="" className="whale-img h-5 w-5 object-contain" />
+            <img src="/blue.png" alt="" draggable={false} className="whale-img h-5 w-5 object-contain" />
             <ChevronLeft className="h-3 w-3 text-muted-foreground" />
           </button>
         </div>
