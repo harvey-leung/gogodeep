@@ -23,7 +23,7 @@ const AppNav = ({ user }: { user: User | null | undefined }) => {
               </Button>
             </Link>
           ) : (
-            <Link to="/signup">
+            <Link to="/workspace">
               <Button className="h-11 px-7 text-base font-semibold rounded-xl bg-primary hover:bg-primary/90">
                 Start Now
               </Button>

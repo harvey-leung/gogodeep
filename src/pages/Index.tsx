@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { SCAN_LIMITS, SCAN_CACHE_KEY } from "@/lib/supabase";
 import { FREE_FOR_ALL } from "@/lib/featureFlags";
 import { whaleToast } from "@/lib/whaleToast";
-import { calcScanXP, QUIZ_XP, CHALLENGE_BONUS_XP, addBonusXP, getBonusXPEntries } from "@/lib/xp";
+import { calcScanXP, calcRelativeScanXP, QUIZ_XP, CHALLENGE_BONUS_XP, addBonusXP, getBonusXPEntries } from "@/lib/xp";
 import type { User } from "@supabase/supabase-js";
 
 const QUOTES = [
@@ -370,21 +370,23 @@ const Dashboard = ({ user }: { user: User }) => {
         error_category: l.error_category,
       }));
 
+      const allLabels = logs.map(l => l.specific_error_tag ?? l.topic ?? null);
       const dayXP: Record<string, number> = {};
-      for (const l of logs) {
+      for (let i = 0; i < logs.length; i++) {
+        const l = logs[i];
         if (l.created_at) {
           const d = l.created_at.split("T")[0];
-          dayXP[d] = (dayXP[d] ?? 0) + calcScanXP(l.specific_error_tag ?? l.topic, l.error_category);
+          dayXP[d] = (dayXP[d] ?? 0) + calcRelativeScanXP(l.specific_error_tag ?? l.topic, l.error_category, allLabels);
         }
       }
-      // Add bonus XP (quiz, challenge) from localStorage
+      // Add bonus XP (quiz, challenge, practice) from localStorage
       const bonusEntries = getBonusXPEntries(user.id);
       for (const e of bonusEntries) {
         dayXP[e.date] = (dayXP[e.date] ?? 0) + e.xp;
       }
       const todayStr = new Date().toISOString().split("T")[0];
       const todayXP = dayXP[todayStr] ?? 0;
-      const totalXP = logs.reduce((sum, l) => sum + calcScanXP(l.specific_error_tag ?? l.topic, l.error_category), 0)
+      const totalXP = logs.reduce((sum, l, i) => sum + calcRelativeScanXP(l.specific_error_tag ?? l.topic, l.error_category, allLabels), 0)
         + bonusEntries.reduce((sum, e) => sum + e.xp, 0);
       const bestDayXP = Object.values(dayXP).length ? Math.max(...Object.values(dayXP)) : 0;
 
@@ -529,6 +531,7 @@ const Dashboard = ({ user }: { user: User }) => {
     }
     // Award quiz XP for everyone
     addBonusXP(user.id, QUIZ_XP, "quiz");
+    setData(prev => prev ? { ...prev, totalXP: prev.totalXP + QUIZ_XP, todayXP: prev.todayXP + QUIZ_XP } : prev);
     window.dispatchEvent(new CustomEvent("whale-notify", {
       detail: { message: `+${QUIZ_XP} XP — quiz complete!`, type: "success" },
     }));
@@ -752,6 +755,7 @@ const Dashboard = ({ user }: { user: User }) => {
                 const updated = { ...dailyClaim, claimed: true };
                 setDailyClaim(updated);
                 try { localStorage.setItem(DAILY_CLAIM_KEY, JSON.stringify(updated)); } catch {}
+                setData(prev => prev ? { ...prev, totalXP: prev.totalXP + dailyClaim.amount, todayXP: prev.todayXP + dailyClaim.amount } : prev);
                 window.dispatchEvent(new CustomEvent("whale-notify", {
                   detail: { message: `+${dailyClaim.amount} XP claimed!`, type: "success" },
                 }));
@@ -1575,61 +1579,19 @@ const FAQ_ITEMS = [
 ];
 
 function GoButton() {
-  const MAX_OS = 14;
-  const FADE_COUNT = 5;
-  const [extraOs, setExtraOs] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const handleEnter = () => {
-    setExtraOs(0);
-    intervalRef.current = setInterval(() => {
-      setExtraOs((n) => (n < MAX_OS ? n + 1 : n));
-    }, 60);
-  };
-
-  const handleLeave = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    setExtraOs(0);
-  };
-
-  const isCharging = extraOs > 0;
-  const maxed = extraOs >= MAX_OS;
-  const totalOs = extraOs + 1;
-
   return (
     <Link to="/workspace">
-      <button
-        onMouseEnter={handleEnter}
-        onMouseLeave={handleLeave}
-        style={isCharging ? {
-          backgroundImage: "linear-gradient(135deg, #1d4ed8, #4f46e5, #7c3aed, #6d28d9, #2563eb, #818cf8, #3b82f6, #7c3aed, #1d4ed8)",
-          backgroundSize: "600% 600%",
-          animation: maxed
-            ? "gradientFrantic 0.35s linear infinite"
-            : "gradientShift 1.4s linear infinite",
-        } : {}}
-        className={`relative h-16 min-w-[200px] rounded-2xl px-10 text-xl font-bold text-white select-none overflow-hidden
-          transition-[box-shadow,transform] duration-300
-          ${isCharging
-            ? "shadow-[0_0_50px_12px_rgba(99,102,241,0.6)] scale-105"
-            : "bg-primary shadow-[0_0_24px_4px_rgba(91,127,239,0.3)] hover:scale-105 hover:shadow-[0_0_36px_8px_rgba(91,127,239,0.45)]"
-          }`}
-      >
+      <button className="group relative h-16 min-w-[200px] rounded-2xl bg-primary px-10 text-xl font-bold text-white select-none overflow-hidden transition-all duration-300 shadow-[0_0_24px_4px_rgba(91,127,239,0.3)] hover:scale-[1.03] hover:shadow-[0_0_44px_10px_rgba(91,127,239,0.45)]">
+        {/* Shimmer sweep on hover */}
+        <span className="pointer-events-none absolute inset-0 translate-x-[-100%] skew-x-[-20deg] bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-500 group-hover:translate-x-[150%]" />
         <span className="relative z-10 flex items-end gap-0 justify-center leading-none tracking-tight">
           <span>Go</span>
-          {Array.from({ length: extraOs }, (_, i) => {
-            const distFromEnd = extraOs - 1 - i;
-            const opacity = distFromEnd < FADE_COUNT ? (distFromEnd + 0.5) / FADE_COUNT : 1;
-            return <span key={i} style={{ opacity, transition: "opacity 60ms" }}>o</span>;
-          })}
-          {!isCharging && (
-            <span className="flex items-end mb-0.5 ml-0.5">
-              {[0, 1, 2].map((i) => (
-                <span key={i} className="inline-block animate-bounce text-white/80"
-                  style={{ animationDelay: `${i * 160}ms`, animationDuration: "900ms" }}>.</span>
-              ))}
-            </span>
-          )}
+          <span className="flex items-end mb-0.5 ml-0.5">
+            {[0, 1, 2].map((i) => (
+              <span key={i} className="inline-block animate-bounce text-white/80"
+                style={{ animationDelay: `${i * 160}ms`, animationDuration: "900ms" }}>.</span>
+            ))}
+          </span>
         </span>
       </button>
     </Link>

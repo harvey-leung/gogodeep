@@ -146,14 +146,16 @@ export default function AppSidebar({ user }: { user: User | null; onUserUpdate?:
                 </div>
 
                 {/* Dropdown content */}
-                {workspaceExpanded && user && (
+                {workspaceExpanded && (
                   <div className="mt-0.5 ml-3 border-l border-border pl-2 pb-1">
-                    {/* Scan history — fades after ~5 items, scrollable */}
-                    <div className="relative max-h-52 overflow-y-auto">
-                      <HistorySidebar />
-                      {/* Fade gradient at bottom */}
-                      <div className="pointer-events-none sticky bottom-0 h-8 bg-gradient-to-t from-card to-transparent" />
-                    </div>
+                    {user ? (
+                      <div className="relative max-h-52 overflow-y-auto">
+                        <HistorySidebar />
+                        <div className="pointer-events-none sticky bottom-0 h-8 bg-gradient-to-t from-card to-transparent" />
+                      </div>
+                    ) : (
+                      <p className="px-1 py-2 text-[11px] text-muted-foreground/50">Your scans will appear here after your first scan.</p>
+                    )}
                   </div>
                 )}
               </div>

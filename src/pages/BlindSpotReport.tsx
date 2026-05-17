@@ -22,7 +22,7 @@ import { FREE_FOR_ALL } from "@/lib/featureFlags";
 import { scanImageStore } from "@/lib/pendingFile";
 import { whaleToast } from "@/lib/whaleToast";
 import { cn } from "@/lib/utils";
-import { calcScanXP } from "@/lib/xp";
+import { calcScanXP, addBonusXP, PRACTICE_CORRECT_XP } from "@/lib/xp";
 
 const SESSION_REPORT_KEY = "gogodeep_pending_report";
 
@@ -65,7 +65,7 @@ function questionToBase64(text: string): string {
   return canvas.toDataURL("image/png").split(",")[1];
 }
 
-type PracticeItem = { id: number; question: string; answer: string };
+type PracticeItem = { id: number; question: string; answer: string; options?: string[] };
 
 type IdentifyDiagnosis = {
   mode: "identify";
@@ -216,17 +216,46 @@ function UpgradeDialog({ open, onClose, deep = false }: { open: boolean; onClose
 
 // ── Practice tab ──────────────────────────────────────────────────────────────
 
-function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadingPractice, onAskWhale }: {
+type MCState = { shuffled: string[]; correctIdx: number; selected: number | null };
+
+function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadingPractice, onAskWhale, userId }: {
   problems: PracticeItem[];
   plan: string;
   onGenerateMore: () => Promise<void>;
   isGeneratingMore: boolean;
   isLoadingPractice: boolean;
   onAskWhale: (text: string) => void;
+  userId: string | null;
 }) {
-  const isPaid = true; // concept tab open to all
-  const [revealed, setRevealed] = useState<Set<number>>(new Set());
-  const [upgradeType, setUpgradeType] = useState<"paid" | null>(null);
+  const [mcState, setMcState] = useState<Record<number, MCState>>({});
+  const [earnedIds, setEarnedIds] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    setMcState(prev => {
+      const next = { ...prev };
+      for (const p of problems) {
+        if (next[p.id] || !p.options || p.options.length < 2) continue;
+        const correct = p.options[0];
+        const shuffled = [...p.options].sort(() => Math.random() - 0.5);
+        next[p.id] = { shuffled, correctIdx: shuffled.indexOf(correct), selected: null };
+      }
+      return next;
+    });
+  }, [problems]);
+
+  function handleSelect(id: number, idx: number) {
+    const state = mcState[id];
+    if (!state || state.selected !== null) return;
+    setMcState(prev => ({ ...prev, [id]: { ...prev[id], selected: idx } }));
+    const isCorrect = idx === state.correctIdx;
+    if (isCorrect && userId && !earnedIds.has(id)) {
+      addBonusXP(userId, PRACTICE_CORRECT_XP, "practice");
+      setEarnedIds(prev => new Set(prev).add(id));
+      window.dispatchEvent(new CustomEvent("whale-notify", {
+        detail: { message: `+${PRACTICE_CORRECT_XP} XP — correct!`, type: "success" },
+      }));
+    }
+  }
 
   if (isLoadingPractice) {
     return (
@@ -247,42 +276,60 @@ function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadi
     <>
       <div className="space-y-3">
         {problems.map((p, idx) => {
-          const open = revealed.has(p.id);
-          const canReveal = true;
+          const state = mcState[p.id];
+          const answered = state?.selected !== null && state?.selected !== undefined;
           return (
             <div key={p.id} className="rounded-lg border border-border bg-secondary/40 p-4 animate-in fade-in slide-in-from-bottom-2 duration-300 fill-mode-both" style={{ animationDelay: `${idx * 70}ms` }}>
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-medium text-foreground">
-                  <span className="mr-2 text-muted-foreground/60">Q{idx + 1}.</span>
-                  <RichText text={p.question} />
-                </p>
-                <button
-                  onClick={() => {
-                    if (!canReveal) { setUpgradeType("paid"); return; }
-                    setRevealed((prev) => {
-                      const next = new Set(prev);
-                      open ? next.delete(p.id) : next.add(p.id);
-                      return next;
-                    });
-                  }}
-                  className="shrink-0 text-xs text-primary underline underline-offset-2 hover:text-primary/80"
-                >
-                  {open ? "Hide" : "Answer"}
-                </button>
-              </div>
-              {open && (
-                <div className="mt-3 animate-in fade-in slide-in-from-top-1 duration-200 space-y-2">
-                  <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-foreground">
-                    <RichText text={p.answer} />
-                  </p>
-                  <button
-                    onClick={() => onAskWhale(`Help me understand this practice question: ${p.question}`)}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
-                  >
-                    <img src="/blue.png" alt="" draggable={false} className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
-                    Ask Blue about this question
-                  </button>
+              <p className="mb-3 text-sm font-medium text-foreground">
+                <span className="mr-2 text-muted-foreground/60">Q{idx + 1}.</span>
+                <RichText text={p.question} />
+              </p>
+
+              {state ? (
+                <div className="space-y-2">
+                  {state.shuffled.map((opt, i) => {
+                    const isCorrect = i === state.correctIdx;
+                    const isSelected = state.selected === i;
+                    let cls = "w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors ";
+                    if (!answered) {
+                      cls += "border-border bg-secondary/60 hover:border-primary/40 hover:bg-secondary text-foreground";
+                    } else if (isCorrect) {
+                      cls += "border-green-500/40 bg-green-500/10 text-green-400 font-semibold";
+                    } else if (isSelected) {
+                      cls += "border-red-500/30 bg-red-500/10 text-red-400";
+                    } else {
+                      cls += "border-border/40 bg-secondary/30 text-muted-foreground/50";
+                    }
+                    return (
+                      <button key={i} disabled={answered} onClick={() => handleSelect(p.id, i)} className={cls}>
+                        <RichText text={opt} />
+                      </button>
+                    );
+                  })}
+                  {answered && (
+                    <div className="mt-1 flex items-center justify-between">
+                      {state.selected === state.correctIdx ? (
+                        <span className="text-xs font-semibold text-green-400">Correct! +{PRACTICE_CORRECT_XP} XP</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          Correct answer: <span className="font-semibold text-foreground"><RichText text={state.shuffled[state.correctIdx]} /></span>
+                        </span>
+                      )}
+                      <button
+                        onClick={() => onAskWhale(`Help me understand this practice question: ${p.question}`)}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
+                      >
+                        <img src="/blue.png" alt="" draggable={false} className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
+                        Ask Blue
+                      </button>
+                    </div>
+                  )}
                 </div>
+              ) : (
+                // Fallback for legacy items without options
+                <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-foreground">
+                  <RichText text={p.answer} />
+                </p>
               )}
             </div>
           );
@@ -293,18 +340,13 @@ function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadi
         variant="outline"
         className="mt-4 w-full border-border"
         disabled={isGeneratingMore}
-        onClick={() => {
-          if (!isPaid) { setUpgradeType("paid"); return; }
-          onGenerateMore();
-        }}
+        onClick={onGenerateMore}
       >
         {isGeneratingMore
           ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           : <ChevronRight className="mr-2 h-4 w-4" />}
         {isGeneratingMore ? "Generating…" : "Generate more questions"}
       </Button>
-
-      <UpgradeDialog open={upgradeType === "paid"} onClose={() => setUpgradeType(null)} />
     </>
   );
 }
@@ -981,6 +1023,7 @@ const BlindSpotReport = () => {
 
   const [plan, setPlan] = useState<string>("free");
   const [planLoaded, setPlanLoaded] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ReportTab>(mode === "guide" ? "steps" : "error");
   const [revealedSteps, setRevealedSteps] = useState(1);
   const [extraProblems, setExtraProblems] = useState<PracticeItem[]>([]);
@@ -991,11 +1034,20 @@ const BlindSpotReport = () => {
   const [loadingConcept, setLoadingConcept] = useState(false);
   const [loadingPractice, setLoadingPractice] = useState(false);
   const [loadingSteps, setLoadingSteps] = useState(false);
+  const fetchStepsMounted = useRef(true);
+  useEffect(() => { return () => { fetchStepsMounted.current = false; }; }, []);
 
   // Keep displaySrc in sync when navigation brings a new image
   useEffect(() => {
     setDisplaySrc(imageSrc);
   }, [imageSrc]);
+
+  // Revoke blob URL on unmount to avoid memory leak
+  useEffect(() => {
+    return () => {
+      if (imageSrc?.startsWith("blob:")) URL.revokeObjectURL(imageSrc);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let mounted = true;
@@ -1007,7 +1059,7 @@ const BlindSpotReport = () => {
         .select("plan")
         .eq("id", user.id)
         .single();
-      if (mounted) { setPlan(data?.plan ?? "free"); setPlanLoaded(true); }
+      if (mounted) { setPlan(data?.plan ?? "free"); setPlanLoaded(true); setUserId(user.id); }
     });
     return () => { mounted = false; };
   }, []);
@@ -1021,6 +1073,7 @@ const BlindSpotReport = () => {
     supabase.functions.invoke("diagnose-image", {
       body: { text: questionSummary || topic, mode: "guide_steps", complexity: 2 },
     }).then(({ data, error }) => {
+      if (!fetchStepsMounted.current) return;
       setLoadingSteps(false);
       if (error || (data as any)?.error) return;
       const steps: string[] = Array.isArray((data as any)?.steps) ? (data as any).steps : [];
@@ -1056,10 +1109,12 @@ const BlindSpotReport = () => {
     if ((diagnosis as any)?.core_concept) return; // already in cached diagnosis
     const topic = (diagnosis as any)?.concept_label ?? (diagnosis as any)?.question_summary ?? "STEM";
     const complexity = parseInt(localStorage.getItem("gogodeep_complexity") ?? "2", 10);
+    let mounted = true;
     setLoadingConcept(true);
     supabase.functions.invoke("diagnose-image", {
       body: { mode: "guide_concept", topic, what_happened: (diagnosis as any)?.what_happened, complexity },
     }).then(({ data, error }) => {
+      if (!mounted) return;
       setLoadingConcept(false);
       if (error || (data as any)?.error) { whaleToast.error("Failed to load concept."); return; }
       const result = { core_concept: (data as any)?.core_concept, recognition_cue: (data as any)?.recognition_cue };
@@ -1076,6 +1131,7 @@ const BlindSpotReport = () => {
         } catch { /* ignore */ }
       }
     });
+    return () => { mounted = false; };
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lazy load practice when Practice tab is first clicked (waits for plan)
@@ -1086,10 +1142,12 @@ const BlindSpotReport = () => {
     if (Array.isArray((diagnosis as any)?.practice_problems) && (diagnosis as any).practice_problems.length > 0) return;
     const topic = (diagnosis as any)?.concept_label ?? (diagnosis as any)?.question_summary ?? "STEM";
     const practice_count = 3;
+    let mounted = true;
     setLoadingPractice(true);
     supabase.functions.invoke("diagnose-image", {
       body: { mode: "more_practice", topic, practice_count, start_id: 1 },
     }).then(({ data, error }) => {
+      if (!mounted) return;
       setLoadingPractice(false);
       if (error || (data as any)?.error) { whaleToast.error("Failed to load practice questions."); return; }
       const problems: PracticeItem[] = (data as any)?.practice_problems ?? [];
@@ -1106,6 +1164,7 @@ const BlindSpotReport = () => {
         } catch { /* ignore */ }
       }
     });
+    return () => { mounted = false; };
   }, [activeTab, planLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -1221,6 +1280,19 @@ const BlindSpotReport = () => {
           className="flex min-w-0 flex-col overflow-y-auto transition-[width] duration-300 ease-in-out"
         >
           <div className="p-6 space-y-4">
+            {/* Guest signup banner */}
+            {isGuest && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">Save your results</p>
+                  <p className="text-xs text-muted-foreground">Create a free account to keep this scan and get more.</p>
+                </div>
+                <Button className="shrink-0 bg-primary hover:bg-primary/90 text-xs h-8 px-3" onClick={() => navigate("/signup")}>
+                  Sign up free
+                  <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
             {/* Tab bar */}
             <div className="relative flex w-full rounded-md border border-border bg-secondary p-1">
               <div
@@ -1279,6 +1351,7 @@ const BlindSpotReport = () => {
                   isGeneratingMore={isGeneratingMore}
                   isLoadingPractice={loadingPractice}
                   onAskWhale={askWhale}
+                  userId={userId}
                 />
               )}
             </div>

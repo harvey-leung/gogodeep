@@ -129,7 +129,6 @@ const DiagnosticLab = () => {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
   const resetCountdown = useUtcResetCountdown();
-  const pendingNavRef = useRef<{ imageUrl: string; diagnosis: unknown } | null>(null);
   const [cooldownActive, setCooldownActive] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -153,15 +152,17 @@ const DiagnosticLab = () => {
   const checkCooldown = async (): Promise<boolean> => {
     const { data: { user } } = await supabase.auth.getUser();
     const key = user?.id ? `gogodeep_last_scan_${user.id}` : "gogodeep_last_scan_guest";
-    const last = parseInt(localStorage.getItem(key) ?? "0", 10);
-    const remaining = SCAN_COOLDOWN_MS - (Date.now() - last);
-    if (remaining > 0) {
-      setCooldownActive(true);
-      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
-      cooldownTimerRef.current = setTimeout(() => setCooldownActive(false), remaining);
-      return false;
-    }
-    localStorage.setItem(key, String(Date.now()));
+    try {
+      const last = parseInt(localStorage.getItem(key) ?? "0", 10);
+      const remaining = SCAN_COOLDOWN_MS - (Date.now() - last);
+      if (remaining > 0) {
+        setCooldownActive(true);
+        if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = setTimeout(() => setCooldownActive(false), remaining);
+        return false;
+      }
+      localStorage.setItem(key, String(Date.now()));
+    } catch { /* localStorage unavailable — skip cooldown */ }
     return true;
   };
 
@@ -172,7 +173,8 @@ const DiagnosticLab = () => {
       const {
         data: { user: preCheckUser },
       } = await supabase.auth.getUser();
-      if (!preCheckUser?.id) {
+      const isGuest = !preCheckUser?.id;
+      if (isGuest && localStorage.getItem("gogodeep_guest_scan_used")) {
         navigate("/signup");
         return;
       }
@@ -180,12 +182,14 @@ const DiagnosticLab = () => {
       setIsAnalyzing(true);
 
       try {
-        const credits = await checkScanCredits();
-        if (!credits.allowed) {
-          setIsAnalyzing(false);
-          setRemainingCredits(credits.credits);
-          setShowUpgradeModal(true);
-          return;
+        if (!isGuest) {
+          const credits = await checkScanCredits();
+          if (!credits.allowed) {
+            setIsAnalyzing(false);
+            setRemainingCredits(credits.credits);
+            setShowUpgradeModal(true);
+            return;
+          }
         }
 
         let processedFile: File | Blob = file;
@@ -238,10 +242,17 @@ const DiagnosticLab = () => {
           return;
         }
 
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        // Guest path — skip all DB writes, mark scan used, show result with signup prompt
+        if (isGuest) {
+          try { localStorage.setItem("gogodeep_guest_scan_used", "1"); } catch {}
+          try { sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", guest: true })); } catch {}
+          setScanComplete(true);
+          await new Promise((r) => setTimeout(r, 580));
+          navigate("/report", { state: { imageUrl: url, diagnosis: data, mode: "guide", guest: true } });
+          return;
+        }
 
+        const user = preCheckUser!;
         const topic = (data as any)?.concept_label ?? (data as any)?.question_summary ?? null;
         const whaleScanContext = [
           "The user has a scan loaded. Answer questions based on this context and do not ask them to upload a screenshot.",
@@ -318,7 +329,8 @@ const DiagnosticLab = () => {
     const {
       data: { user: preCheckUser },
     } = await supabase.auth.getUser();
-    if (!preCheckUser?.id) {
+    const isGuest = !preCheckUser?.id;
+    if (isGuest && localStorage.getItem("gogodeep_guest_scan_used")) {
       navigate("/signup");
       return;
     }
@@ -326,12 +338,14 @@ const DiagnosticLab = () => {
     setIsAnalyzing(true);
 
     try {
-      const credits = await checkScanCredits();
-      if (!credits.allowed) {
-        setIsAnalyzing(false);
-        setRemainingCredits(credits.credits);
-        setShowUpgradeModal(true);
-        return;
+      if (!isGuest) {
+        const credits = await checkScanCredits();
+        if (!credits.allowed) {
+          setIsAnalyzing(false);
+          setRemainingCredits(credits.credits);
+          setShowUpgradeModal(true);
+          return;
+        }
       }
 
       const { data, error } = await supabase.functions.invoke("diagnose-image", {
@@ -350,10 +364,17 @@ const DiagnosticLab = () => {
         return;
       }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      // Guest path — skip all DB writes, mark scan used, show result with signup prompt
+      if (isGuest) {
+        try { localStorage.setItem("gogodeep_guest_scan_used", "1"); } catch {}
+        try { sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", guest: true, inputText: trimmed })); } catch {}
+        setScanComplete(true);
+        await new Promise((r) => setTimeout(r, 580));
+        navigate("/report", { state: { imageUrl: null, inputText: trimmed, diagnosis: data, mode: "guide", guest: true } });
+        return;
+      }
 
+      const user = preCheckUser!;
       const topic = (data as any)?.concept_label ?? (data as any)?.question_summary ?? null;
       const whaleScanContext = [
         "The user has a scan loaded. Answer questions based on this context and do not ask them to upload a screenshot.",

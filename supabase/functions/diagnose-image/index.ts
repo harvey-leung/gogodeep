@@ -25,11 +25,11 @@ Deno.serve(async (req: Request) => {
     }
 
     function stepsDescription(level: number): string {
-      const common = " Each step must perform actual calculation, reasoning, or manipulation — never output an introduction or summary step (e.g. 'Understand the conditions' is forbidden). Never output an empty string. $...$ for inline math, $$...$$ for display equations.";
-      if (level === 1) return `Complete step-by-step solution in plain language for a beginner. Break the working into clear sub-steps, each doing real reasoning or arithmetic. Prefer words over formulas where possible.${common}`;
-      if (level === 3) return `Complete step-by-step solution using precise academic terminology. Each step is a clear, concise instruction referencing relevant rules or theorems by name.${common}`;
-      if (level === 4) return `Rigorous step-by-step solution with full formal notation. Concise and dense — include theorem names, edge cases, and proof reasoning where relevant.${common}`;
-      return `Complete step-by-step solution. Each step is one clear instruction that does concrete work.${common}`;
+      const common = " CRITICAL: Every step must work with the SPECIFIC numbers, variables, and conditions from THIS question — never describe the general method or technique. Forbidden openings: 'Identify...', 'Recall...', 'Use the formula for...', 'Apply the rule...', 'Note that...' — these are method descriptions, not solution steps. Instead, substitute the actual values immediately and show the arithmetic/algebra. Never output an introduction or summary step. Never output an empty string. $...$ for inline math, $$...$$ for display equations.";
+      if (level === 1) return `Complete step-by-step solution in plain language for a beginner. Each sub-step does one concrete thing with the actual numbers from the question. Prefer words over formulas where possible.${common}`;
+      if (level === 3) return `Complete step-by-step solution using precise academic terminology. Each step names the rule AND immediately applies it to the question's specific values.${common}`;
+      if (level === 4) return `Rigorous step-by-step solution with full formal notation. Each step applies theorems directly to the question's values — concise and dense.${common}`;
+      return `Complete step-by-step solution. Each step substitutes the actual values from the question and shows concrete working.${common}`;
     }
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
@@ -57,7 +57,7 @@ Deno.serve(async (req: Request) => {
     // ── guide_steps: steps + metadata only, no concept or practice ──────────
     if (mode === "guide_steps") {
       const data = await callAnthropic({
-        system: `You are an expert STEM tutor. Break down the student's question step by step and generate 3 practice problems with multiple-choice options. If the image is NOT a STEM question or is too blurry, set input_status accordingly. You MUST use the guide_steps tool. IMPORTANT: Every step in the steps array must perform concrete work (calculation, reasoning, substitution, etc.) — do NOT produce steps that merely introduce, list, or name what follows. Do NOT produce empty steps.${complexityInstruction(complexity)}${MATH}`,
+        system: `You are an expert STEM tutor. Solve the student's specific question step by step. If the image is NOT a STEM question or is too blurry, set input_status accordingly. You MUST use the guide_steps tool. CRITICAL RULE: Every step must solve THIS specific question using its actual numbers and values — never explain the general method. A step like "Use the quadratic formula" is forbidden; write "x = (-3 ± √(9−4·2·1)) / (2·2)" instead. Do NOT produce steps that merely introduce, name, or describe what follows. Do NOT produce empty steps.${complexityInstruction(complexity)}${MATH}`,
         messages: [{
           role: "user",
           content: text
