@@ -924,18 +924,20 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
       ) : (
         <>
           <div className="space-y-2">
-            {steps.slice(0, revealed).map((step, i) => (
+            {steps.slice(0, revealed).map((step, i) => {
+              const cleanStep = step.replace(/^Step\s+\d+:\s*/i, "");
+              return (
               <div key={i} className="rounded-lg border border-primary/20 bg-primary/5 p-4 animate-in fade-in slide-in-from-bottom-2 duration-300 fill-mode-both" style={{ animationDelay: `${i * 60}ms` }}>
                 <div className="flex items-start gap-3">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
                     {i + 1}
                   </span>
-                  <p className="text-sm text-foreground leading-relaxed"><RichText text={step} /></p>
+                  <p className="text-sm text-foreground leading-relaxed"><RichText text={cleanStep} /></p>
                 </div>
                 {isPaid && (
                   <div className="mt-3 border-t border-primary/10 pt-3">
                     <button
-                      onClick={() => onAskWhale(`Explain step ${i + 1}: ${step}`)}
+                      onClick={() => onAskWhale(`Explain step ${i + 1}: ${cleanStep}`)}
                       className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
                     >
                       <img src="/blue.png" alt="" draggable={false} className="whale-img h-3.5 w-3.5 rounded-full object-cover" />
@@ -944,7 +946,8 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
                   </div>
                 )}
               </div>
-            ))}
+            );
+            })}
           </div>
           {revealed < steps.length ? (
             <div className="flex gap-2">
