@@ -672,6 +672,7 @@ const Dashboard = ({ user }: { user: User }) => {
     try {
       sessionStorage.setItem("gogodeep_challenge", todayChallenge);
       sessionStorage.setItem("gogodeep_challenge_bonus", "1");
+      sessionStorage.setItem("gogodeep_challenge_xp", String(calcScanXP(todayChallenge, null) + CHALLENGE_BONUS_XP));
     } catch {}
     navigate("/workspace");
   };
@@ -791,7 +792,7 @@ const Dashboard = ({ user }: { user: User }) => {
                       disabled={dailyClaim.claimed}
                       className="flex-1 rounded-xl border border-primary/30 bg-primary/5 px-4 py-1.5 text-sm font-black text-primary transition-all hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {dailyClaim.claimed ? "Claimed ✓" : `Claim +${dailyClaim.amount} XP`}
+                      {dailyClaim.claimed ? (() => { const now = new Date(); const secsLeft = (24 - now.getHours() - 1) * 3600 + (59 - now.getMinutes()) * 60 + (59 - now.getSeconds()); const h = Math.floor(secsLeft / 3600); const m = Math.floor((secsLeft % 3600) / 60); return h > 0 ? `Next in ${h}h ${m}m` : `Next in ${m}m`; })() : `Claim +${dailyClaim.amount} XP`}
                     </button>
                   </div>
                 </div>

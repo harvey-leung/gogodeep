@@ -30,6 +30,7 @@ const Login = () => {
     setFormError("");
     setIsLoading(true);
     try {
+      try { localStorage.clear(); } catch {};
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       setIsLoading(false);
       if (error) { setFormError(error.message); return; }
@@ -38,9 +39,13 @@ const Login = () => {
       } else {
         navigate(redirectTo, { replace: true });
       }
-    } catch {
+    } catch (err) {
       setIsLoading(false);
-      setFormError("An unexpected error occurred. Please try again.");
+      if (err instanceof Error && err.message.includes("quota")) {
+        setFormError("Storage is full. Please clear your browser data for this site and try again.");
+      } else {
+        setFormError("An unexpected error occurred. Please try again.");
+      }
     }
   };
 

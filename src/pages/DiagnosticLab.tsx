@@ -8,7 +8,7 @@ import { whaleToast } from "@/lib/whaleToast";
 import { Button } from "@/components/ui/button";
 import EducatorLayout from "@/components/EducatorLayout";
 import { checkScanCredits, SCAN_CACHE_KEY } from "@/lib/supabase";
-import { calcScanXP, CHALLENGE_BONUS_XP, addBonusXP } from "@/lib/xp";
+import { calcDynamicScanXP, CHALLENGE_BONUS_XP, addBonusXP } from "@/lib/xp";
 import { pendingFileStore, scanImageStore } from "@/lib/pendingFile";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -31,13 +31,26 @@ function useUtcResetCountdown() {
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
-function notifyScanXP(userId: string, topic: string | null, errorCategory: string | null) {
-  const base = calcScanXP(topic, errorCategory);
+async function notifyScanXP(userId: string, topic: string | null, errorCategory: string | null) {
+  let history: { topic: string | null; error_category: string | null }[] = [];
+  try {
+    const { data } = await (supabase as any)
+      .from("error_logs")
+      .select("topic, error_category")
+      .eq("student_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (data) history = data;
+  } catch {}
+
   const isChallenge = sessionStorage.getItem("gogodeep_challenge_bonus") === "1";
+  const storedChallengeXP = parseInt(sessionStorage.getItem("gogodeep_challenge_xp") ?? "0", 10);
   sessionStorage.removeItem("gogodeep_challenge_bonus");
-  const bonus = isChallenge ? CHALLENGE_BONUS_XP : 0;
-  const total = base + bonus;
-  if (isChallenge) addBonusXP(userId, bonus, "challenge");
+  sessionStorage.removeItem("gogodeep_challenge_xp");
+  const total = isChallenge && storedChallengeXP > 0
+    ? storedChallengeXP
+    : calcDynamicScanXP(topic, errorCategory, history);
+  if (isChallenge) addBonusXP(userId, CHALLENGE_BONUS_XP, "challenge");
   const msg = isChallenge ? `+${total} XP — challenge bonus!` : `+${total} XP`;
   window.dispatchEvent(new CustomEvent("whale-notify", { detail: { message: msg, type: "success" } }));
 }
@@ -281,7 +294,7 @@ const DiagnosticLab = () => {
         const scanId = insertedScan?.id;
         if (scanId) {
           try {
-            localStorage.setItem(SCAN_CACHE_KEY(scanId), JSON.stringify({ diagnosis: data, mode: "guide", imageBase64: base64, mimeType: safeMime }));
+            localStorage.setItem(SCAN_CACHE_KEY(scanId), JSON.stringify({ diagnosis: data, mode: "guide" }));
           } catch {
             // quota exceeded — Supabase is the fallback
           }

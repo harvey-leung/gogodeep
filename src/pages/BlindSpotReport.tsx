@@ -662,8 +662,17 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [creditsUsed, setCreditsUsed] = useState(0);
   const [showLimitDialog, setShowLimitDialog] = useState(false);
+  const [attachment, setAttachment] = useState<{ label: string; content: string; original: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  function parseAttachment(text: string): { label: string; content: string; original: string } {
+    const stepMatch = text.match(/^Explain step (\d+): ([\s\S]*)$/);
+    if (stepMatch) return { label: `Step ${stepMatch[1]}`, content: stepMatch[2], original: text };
+    const practiceMatch = text.match(/^Help me understand this practice question: ([\s\S]*)$/);
+    if (practiceMatch) return { label: "Practice question", content: practiceMatch[1], original: text };
+    return { label: "Context", content: text, original: text };
+  }
 
   useEffect(() => {
     if (plan === "deep") return;
@@ -680,37 +689,43 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
 
   useEffect(() => {
     if (pendingMessage) {
-      setInput(pendingMessage);
+      setAttachment(parseAttachment(pendingMessage));
+      setInput("");
       setShowSuggestions(false);
       onMessageHandled?.();
-      setTimeout(() => {
-        if (inputRef.current) {
-          inputRef.current.focus();
-          inputRef.current.style.height = "auto";
-          inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
-        }
-      }, 50);
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [pendingMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(text: string) {
-    if (!text || loading) return;
+    const trimmed = text.trim();
+    const combined = attachment
+      ? (trimmed ? `${trimmed}\n\n${attachment.original}` : attachment.original)
+      : trimmed;
+    if (!combined || loading) return;
     if (plan !== "deep" && creditsUsed >= WHALE_CREDIT_LIMIT) {
       setShowLimitDialog(true);
       return;
     }
     setShowSuggestions(false);
     setInput("");
+    const displayLabel = attachment
+      ? (trimmed ? trimmed : `[${attachment.label}]`)
+      : trimmed;
+    setAttachment(null);
     if (inputRef.current) {
       inputRef.current.value = "";
       inputRef.current.style.height = "auto";
     }
-    const next: ChatMsg[] = [...messages, { role: "user", content: text }];
-    setMessages(next);
+    // Show a clean display message; send full combined content to AI
+    const displayMsg: ChatMsg = { role: "user", content: displayLabel };
+    const apiMsg: ChatMsg = { role: "user", content: combined };
+    setMessages((prev) => [...prev, displayMsg]);
+    const apiHistory = [...messages, apiMsg];
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("chat-assistant", {
-        body: { messages: next, stepContext },
+        body: { messages: apiHistory, stepContext },
       });
       if ((data as any)?.error === "daily_limit_reached") {
         setCreditsUsed(WHALE_CREDIT_LIMIT);
@@ -785,7 +800,22 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t border-border p-3">
+      <div className="shrink-0 border-t border-border p-3 space-y-2">
+        {/* Step attachment chip */}
+        {attachment && (
+          <div className="rounded-xl border border-border bg-secondary/60 px-3 py-2 text-xs">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="font-semibold text-foreground">{attachment.label}</span>
+              <button
+                onClick={() => setAttachment(null)}
+                className="text-muted-foreground hover:text-foreground shrink-0"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+            <p className="text-muted-foreground line-clamp-2 leading-relaxed">{attachment.content}</p>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           {plan !== "deep" && <WhaleCreditCircle used={creditsUsed} limit={WHALE_CREDIT_LIMIT} />}
           <textarea
@@ -799,13 +829,13 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
               el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
             }}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
-            placeholder="Ask anything…"
+            placeholder={attachment ? "Ask about this step…" : "Ask anything…"}
             className="flex-1 resize-none rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/50 focus:outline-none"
             style={{ maxHeight: 120, overflowY: "auto" }}
           />
           <button
             onClick={() => send(input)}
-            disabled={!input.trim() || loading}
+            disabled={(!input.trim() && !attachment) || loading}
             className="rounded-xl bg-primary p-2 text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
           >
             <Send className="h-4 w-4" />

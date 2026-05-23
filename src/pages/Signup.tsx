@@ -18,7 +18,6 @@ const Signup = () => {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [usernameError, setUsernameError] = useState("");
   const [formError, setFormError] = useState("");
@@ -32,10 +31,10 @@ const Signup = () => {
       setUsernameError("Please enter a username.");
       return;
     }
-    if (!isValidEmail(email) || password.length < 8 || password !== confirmPassword) return;
+    if (!isValidEmail(email) || password.length < 8) return;
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -50,6 +49,11 @@ const Signup = () => {
         } else {
           setFormError(error.message);
         }
+        return;
+      }
+
+      if (data.user && data.user.identities?.length === 0) {
+        setFormError("An account with that email already exists. Try logging in instead.");
         return;
       }
 
@@ -115,18 +119,7 @@ const Signup = () => {
                 )}
               </div>
 
-              <div className="space-y-2">
-                <label htmlFor="signup-confirm-password" className="text-xs font-medium text-muted-foreground">Confirm Password</label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input id="signup-confirm-password" type="password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="border-border bg-secondary pl-9" placeholder="Re-enter password" required />
-                </div>
-                {confirmPassword.length > 0 && confirmPassword !== password && (
-                  <p className="text-xs text-destructive">Passwords do not match.</p>
-                )}
-              </div>
-
-              {formError && <p className="text-xs text-destructive">{formError}</p>}
+{formError && <p className="text-xs text-destructive">{formError}</p>}
               <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isLoading}>
                 {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Create Account
