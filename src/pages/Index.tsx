@@ -815,9 +815,9 @@ const Dashboard = ({ user }: { user: User }) => {
               <span className="text-[9px] font-black uppercase tracking-[0.1em] text-muted-foreground whitespace-nowrap">Recap Quiz</span>
               <span className="text-sm font-black text-foreground leading-none">+{QUIZ_XP} XP</span>
               <span className="text-[10px] font-semibold text-muted-foreground/60">3–5 min</span>
-              {quizDoneToday && data?.plan !== "deep" ? (
-                <button onClick={() => navigate("/pricing")} className="mt-auto w-full rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs font-black text-primary transition-all hover:bg-primary/10">
-                  Get Deep
+              {quizDoneToday ? (
+                <button disabled className="mt-auto w-full rounded-lg border border-green-500/30 bg-green-500/10 px-2 py-1.5 text-xs font-black text-green-400 cursor-default">
+                  Completed ✓
                 </button>
               ) : (data?.recentScans.length ?? 0) < 3 ? (
                 <span className="mt-auto text-[9px] text-muted-foreground">Need {3 - (data?.recentScans.length ?? 0)} more scans</span>
@@ -1095,7 +1095,23 @@ const Dashboard = ({ user }: { user: User }) => {
       {/* Quiz Dialog */}
       <Dialog open={!!quiz} onOpenChange={(open) => { if (!open) setQuiz(null); }}>
         <DialogContent className="border border-border bg-card sm:max-w-2xl p-0 overflow-hidden gap-0">
-          {quiz?.showStats ? (
+          {quiz?.showStats ? (() => {
+            const isFirstCompletion = !quizDoneToday;
+            const isDeep = data?.plan === "deep";
+            if (isFirstCompletion) {
+              try {
+                const today = new Date().toISOString().split("T")[0];
+                addBonusXP(user.id, QUIZ_XP, "quiz");
+                if (!isDeep) {
+                  localStorage.setItem(QUIZ_DONE_KEY, today);
+                  setQuizDoneToday(true);
+                }
+                window.dispatchEvent(new CustomEvent("whale-notify", {
+                  detail: { message: `+${QUIZ_XP} XP — quiz complete!`, type: "success" },
+                }));
+              } catch {}
+            }
+            return (
             <div className="flex flex-col items-center px-8 py-10 text-center">
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Quiz complete</p>
               <p className="mt-4 text-7xl font-extrabold text-foreground">
@@ -1110,12 +1126,14 @@ const Dashboard = ({ user }: { user: User }) => {
                 ))}
               </div>
               <div className="mt-8 flex gap-3">
-                <Button variant="outline" className="border-border" onClick={() => startQuizWithConfig(quizConfig)}>
-                  <RefreshCw className="mr-2 h-4 w-4" /> Try Again
+                <Button variant="outline" className="border-border" disabled={!isDeep} onClick={() => startQuizWithConfig(quizConfig)}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> {isDeep ? "Next Quiz" : "Try Again"}
                 </Button>
                 <Button className="bg-primary hover:bg-primary/90" onClick={() => setQuiz(null)}>Done</Button>
               </div>
             </div>
+            );
+          })() : null
           ) : quiz ? (() => {
             const currentQ = quiz.questions[quiz.current];
             const advance = () => setQuiz((q) => {
