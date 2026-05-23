@@ -139,6 +139,7 @@ const DiagnosticLab = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [textInput, setTextInput] = useState("");
   const [showTextInput, setShowTextInput] = useState(false);
+  const [isChallengeMode, setIsChallengeMode] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
   const resetCountdown = useUtcResetCountdown();
@@ -154,6 +155,7 @@ const DiagnosticLab = () => {
         sessionStorage.removeItem("gogodeep_challenge");
         setTextInput(challenge);
         setShowTextInput(true);
+        setIsChallengeMode(true);
         setTimeout(() => textareaRef.current?.focus(), 80);
       }
     } catch { /* ignore */ }
@@ -595,15 +597,30 @@ const DiagnosticLab = () => {
               or type your question ↓
             </button>
           ) : (
-            <div className="rounded-2xl border-2 border-primary/20 bg-card overflow-hidden shadow-[0_0_32px_hsl(var(--primary)/0.06)] transition-all focus-within:border-primary/40 focus-within:shadow-[0_0_40px_hsl(var(--primary)/0.10)]">
+            <div className={`rounded-2xl border-2 overflow-hidden transition-all ${
+              isChallengeMode
+                ? "border-amber-400/70 shadow-[0_0_32px_rgba(251,191,36,0.18)] focus-within:border-amber-400 focus-within:shadow-[0_0_48px_rgba(251,191,36,0.28)]"
+                : "border-primary/20 bg-card shadow-[0_0_32px_hsl(var(--primary)/0.06)] focus-within:border-primary/40 focus-within:shadow-[0_0_40px_hsl(var(--primary)/0.10)]"
+            }`}>
+              {isChallengeMode && (
+                <div className="flex items-center gap-2 bg-amber-400/10 border-b border-amber-400/20 px-5 py-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">Daily challenge — edit to cancel</span>
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
+                onChange={(e) => {
+                  if (isChallengeMode) {
+                    setIsChallengeMode(false);
+                    try { sessionStorage.removeItem("gogodeep_challenge_bonus"); sessionStorage.removeItem("gogodeep_challenge_xp"); } catch {}
+                  }
+                  setTextInput(e.target.value);
+                }}
                 disabled={isAnalyzing}
                 placeholder="Type or paste your question here…"
                 rows={4}
-                className="w-full resize-none bg-transparent px-5 py-4 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50"
+                className={`w-full resize-none bg-transparent px-5 py-4 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 ${isChallengeMode ? "bg-amber-400/[0.03]" : ""}`}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && textInput.trim()) {
                     e.preventDefault();
@@ -611,7 +628,7 @@ const DiagnosticLab = () => {
                   }
                 }}
               />
-              <div className="flex items-center justify-between border-t border-primary/10 bg-primary/[0.02] px-5 py-3">
+              <div className={`flex items-center justify-between border-t px-5 py-3 ${isChallengeMode ? "border-amber-400/20 bg-amber-400/[0.04]" : "border-primary/10 bg-primary/[0.02]"}`}>
                 <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
                   {isMac ? "⌘↵" : "Ctrl+↵"} to scan
                 </span>

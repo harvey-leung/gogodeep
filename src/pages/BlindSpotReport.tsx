@@ -595,7 +595,7 @@ function WhaleMd({ text }: { text: string }) {
 
 // ── Blue inline chat ────────────────────────────────────────────────────────
 
-type ChatMsg = { role: "user" | "assistant"; content: string };
+type ChatMsg = { role: "user" | "assistant"; content: string; attachment?: { label: string; content: string } };
 
 const WHALE_CREDIT_LIMIT = 100;
 
@@ -712,13 +712,14 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
     const displayLabel = attachment
       ? (trimmed ? trimmed : `[${attachment.label}]`)
       : trimmed;
+    const currentAttachment = attachment;
     setAttachment(null);
     if (inputRef.current) {
       inputRef.current.value = "";
       inputRef.current.style.height = "auto";
     }
     // Show a clean display message; send full combined content to AI
-    const displayMsg: ChatMsg = { role: "user", content: displayLabel };
+    const displayMsg: ChatMsg = { role: "user", content: displayLabel, attachment: currentAttachment };
     const apiMsg: ChatMsg = { role: "user", content: combined };
     setMessages((prev) => [...prev, displayMsg]);
     const apiHistory = [...messages, apiMsg];
@@ -765,8 +766,16 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
           <div key={i}>
             {m.role === "user" ? (
               <div className="flex justify-end">
-                <div className="rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground max-w-[85%]">
-                  {m.content}
+                <div className="flex flex-col gap-2 max-w-[85%]">
+                  {m.attachment && (
+                    <div className="rounded-xl border border-border bg-secondary/60 px-3 py-2 text-xs self-end">
+                      <div className="font-semibold text-foreground mb-1">{m.attachment.label}</div>
+                      <p className="text-muted-foreground line-clamp-2 leading-relaxed">{m.attachment.content}</p>
+                    </div>
+                  )}
+                  <div className="rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground">
+                    {m.content}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -894,7 +903,7 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
     <div className="space-y-4">
       {/* Uploaded image or typed question at the top */}
       {imageSrc ? (
-        <div className="rounded-xl border border-border bg-secondary/40 p-2 flex items-center justify-center">
+        <div className="sticky top-0 z-10 rounded-xl border border-border bg-secondary/40 p-2 flex items-center justify-center">
           <img
             src={imageSrc}
             alt="Your question"
@@ -903,7 +912,7 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
           />
         </div>
       ) : inputText ? (
-        <div className="rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
+        <div className="sticky top-0 z-10 rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
           <p className="whitespace-pre-wrap leading-relaxed">{inputText}</p>
         </div>
       ) : null}
