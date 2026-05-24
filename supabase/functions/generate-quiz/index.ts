@@ -8,6 +8,9 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
   try {
     const { topics } = await req.json();
 
@@ -16,6 +19,48 @@ Deno.serve(async (req: Request) => {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // ── Authentication & rate limit check ────────────────────────────────────
+    const authHeader = req.headers.get("authorization");
+    const jwt = authHeader?.replace("Bearer ", "");
+
+    let userId: string | null = null;
+    let plan = "free";
+    const today = new Date().toISOString().split("T")[0];
+    let lastQuizDate: string | null = null;
+
+    if (jwt) {
+      const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+        headers: { "Authorization": `Bearer ${jwt}`, "apikey": SERVICE_KEY },
+      });
+      const userData = await userRes.json();
+      userId = userData?.id ?? null;
+
+      if (userId) {
+        const profileRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=plan,last_quiz_date`,
+          { headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY } }
+        );
+        const profiles = await profileRes.json();
+        const profile = Array.isArray(profiles) ? profiles[0] : null;
+
+        if (profile) {
+          plan = profile.plan ?? "free";
+          lastQuizDate = profile.last_quiz_date;
+        }
+      }
+    }
+
+    // Enforce rate limit: free users max 1 quiz/hour, deep users unlimited
+    if (plan !== "deep" && userId && lastQuizDate === today) {
+      return new Response(
+        JSON.stringify({
+          error: "daily_quiz_limit",
+          message: "You've already generated a quiz today. Come back tomorrow!",
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
@@ -92,6 +137,20 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: "AI did not return quiz data" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Record quiz generation for rate limiting (free users only)
+    if (userId && plan !== "deep") {
+      await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+        method: "PATCH",
+        headers: {
+          "Authorization": `Bearer ${SERVICE_KEY}`,
+          "apikey": SERVICE_KEY,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal",
+        },
+        body: JSON.stringify({ last_quiz_date: today }),
       });
     }
 

@@ -443,8 +443,13 @@ const Dashboard = ({ user }: { user: User }) => {
     setQuizQuestions(null);
     supabase.functions.invoke("generate-quiz", { body: { topics } }).then(({ data: result, error }) => {
       setQuizLoading(false);
+      if ((result as any)?.error === "daily_quiz_limit") {
+        whaleToast.error((result as any)?.message || "You've already generated a quiz today. Come back tomorrow!");
+        return;
+      }
       if (error || !Array.isArray(result?.questions) || !result.questions.length) {
         console.error("[Quiz] generate-quiz failed:", error, result);
+        whaleToast.error("Failed to generate quiz. Try again in a moment.");
         return;
       }
       const questions: QuizQuestion[] = (result.questions as { topic: string; question: string; options: string[]; correct: number; explanation?: string }[]).map((q) => {
@@ -1361,7 +1366,6 @@ const LOADING_MSGS = [
   "Reading the question…",
   "Identifying the concept…",
   "Detailing the steps…",
-  "Building practice questions…",
 ];
 
 const DemoPanel = () => {

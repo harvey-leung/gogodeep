@@ -50,7 +50,7 @@ function WhaleAvatar({ className }: { className?: string }) {
   );
 }
 
-type Message = { role: "user" | "assistant"; content: string };
+type Message = { role: "user" | "assistant"; content: string; showPracticeButton?: boolean };
 
 const SYSTEM_PROMPT = `You are Blue, the study assistant inside Gogodeep. Your job: give crystal-clear, step-by-step explanations that make students go "oh, NOW I get it."
 
@@ -329,11 +329,24 @@ export default function WhaleAssistant() {
         }]);
         return;
       }
+      if ((data as any)?.error === "rate_limited") {
+        setMessages((prev) => [...prev, {
+          role: "assistant",
+          content: (data as any)?.message || "You're sending messages too quickly. Please wait a moment.",
+        }]);
+        return;
+      }
       if (error || (data as any)?.error) throw new Error((error as any)?.message ?? (data as any)?.error);
-      setMessages((prev) => [...prev, { role: "assistant", content: (data as any).reply }]);
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        content: (data as any).reply,
+        showPracticeButton: (data as any).showPracticeButton,
+      }]);
       if ((data as any)?.creditsUsed !== undefined) setWhaleCreditsUsed((data as any).creditsUsed);
-    } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "Something went wrong. Try again in a moment." }]);
+    } catch (err) {
+      console.error("[Blue] Error:", err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => [...prev, { role: "assistant", content: errMsg?.includes("429") ? "Server is busy. Try again in a moment." : "Something went wrong. Try again in a moment." }]);
     } finally {
       setLoading(false);
     }
@@ -467,20 +480,33 @@ export default function WhaleAssistant() {
           {/* Messages */}
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
             {messages.map((m, i) => (
-              <div key={i} className={cn("flex animate-in fade-in slide-in-from-bottom-1 duration-200", m.role === "user" ? "justify-end" : "justify-start")}>
-                {m.role === "assistant" && (
-                  <WhaleAvatar className="mr-2 mt-1 h-6 w-6 shrink-0 self-start" />
-                )}
-                <div
-                  className={cn(
-                    "max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-relaxed",
-                    m.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "border border-border bg-secondary/60 text-foreground"
+              <div key={i} className="flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                <div className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+                  {m.role === "assistant" && (
+                    <WhaleAvatar className="mr-2 mt-1 h-6 w-6 shrink-0 self-start" />
                   )}
-                >
-                  <RichText text={m.content} />
+                  <div
+                    className={cn(
+                      "max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-relaxed",
+                      m.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "border border-border bg-secondary/60 text-foreground"
+                    )}
+                  >
+                    <RichText text={m.content} />
+                  </div>
                 </div>
+                {m.role === "assistant" && m.showPracticeButton && location.pathname === "/report" && (
+                  <div className="flex justify-start pl-8">
+                    <button
+                      onClick={() => window.dispatchEvent(new CustomEvent("scroll-to-practice-tab"))}
+                      className="text-xs font-medium text-primary hover:text-primary/80 transition-colors flex items-center gap-1.5 py-1"
+                    >
+                      Ready to practice?
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
             {loading && (

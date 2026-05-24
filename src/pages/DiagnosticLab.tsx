@@ -309,7 +309,7 @@ const DiagnosticLab = () => {
         queryClient.invalidateQueries({ queryKey: ["history", "error_logs"] });
         // Persist to sessionStorage — survives tab suspension/restore
         try {
-          sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", scanId }));
+          sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", scanId, imageBase64: base64, mimeType: safeMime }));
         } catch { /* ignore */ }
         window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
         // XP notification
@@ -603,8 +603,9 @@ const DiagnosticLab = () => {
                 : "border-primary/20 bg-card shadow-[0_0_32px_hsl(var(--primary)/0.06)] focus-within:border-primary/40 focus-within:shadow-[0_0_40px_hsl(var(--primary)/0.10)]"
             }`}>
               {isChallengeMode && (
-                <div className="flex items-center gap-2 bg-amber-400/10 border-b border-amber-400/20 px-5 py-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">Daily challenge — edit to cancel</span>
+                <div className="flex items-center justify-between bg-amber-400/10 border-b border-amber-400/20 px-5 py-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">Daily challenge</span>
+                  <span className="text-sm font-black text-amber-500">+{storedChallengeXP} XP</span>
                 </div>
               )}
               <textarea

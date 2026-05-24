@@ -57,7 +57,7 @@ Deno.serve(async (req: Request) => {
     // ── guide_steps: steps + metadata only, no concept or practice ──────────
     if (mode === "guide_steps") {
       const data = await callAnthropic({
-        system: `You are an expert STEM tutor. Solve the student's specific question step by step. If the image is NOT a STEM question or is too blurry, set input_status accordingly. You MUST use the guide_steps tool. CRITICAL RULE: Every step must solve THIS specific question using its actual numbers and values — never explain the general method. A step like "Use the quadratic formula" is forbidden; write "x = (-3 ± √(9−4·2·1)) / (2·2)" instead. Do NOT produce steps that merely introduce, name, or describe what follows. Do NOT produce empty steps.${complexityInstruction(complexity)}${MATH}`,
+        system: `You are an expert STEM tutor. Solve the student's specific question step by step. If the image is NOT a STEM question or is too blurry, set input_status accordingly. You MUST use the guide_steps tool. CRITICAL RULE: Every step must solve THIS specific question using its actual numbers and values — never explain the general method. A step like "Use the quadratic formula" is forbidden; write "x = (-3 ± √(9−4·2·1)) / (2·2)" instead. Do NOT produce steps that merely introduce, name, or describe what follows. Do NOT produce empty steps. BOUNDARY CONDITION RULE: If the original question specifies an interval with ≤ or ≥ (inclusive), check those boundary values explicitly. Do NOT change ≤ to < or ≥ to >. Check x=0, x=360, or any other boundary value if the interval is inclusive.${complexityInstruction(complexity)}${MATH}`,
         messages: [{
           role: "user",
           content: text
@@ -75,10 +75,10 @@ Deno.serve(async (req: Request) => {
             properties: {
               concept_label: { type: "string", description: "2-3 word label for the concept, e.g. 'Quadratic Formula'" },
               question_summary: { type: "string", description: "One sentence describing what the question asks." },
-              what_happened: { type: "string", description: "1-2 sentences. Describe exactly what this problem asks the student to find or do. Reference key numbers, variables, or conditions from the question. Under 50 words. Do NOT mention student errors or working." },
+              what_happened: { type: "string", description: "1-2 sentences. Describe exactly what this problem asks the student to find or do. Reference key numbers, variables, AND interval/domain constraints from the question (e.g., '0° ≤ x ≤ 360°'). Under 50 words. Do NOT mention student errors or working." },
               steps: {
                 type: "array", items: { type: "string" },
-                description: stepsDescription(complexity),
+                description: stepsDescription(complexity) + " If the question has interval constraints (e.g. 0° ≤ x ≤ 360°), check boundary values explicitly in your steps.",
               },
               practice_problems: {
                 type: "array",
@@ -178,8 +178,8 @@ Deno.serve(async (req: Request) => {
     const practiceCount = practice_count ?? 3;
 
     const systemPrompt = isGuide
-      ? `You are an expert STEM tutor. Break down the student's question step by step. For core_concept: explain using a simple everyday analogy a child could understand — no jargon, plain language only. If the image is NOT a STEM question or is too blurry, set input_status accordingly. You MUST use the guide_question tool.${MATH}`
-      : `You are an expert STEM tutor specializing in diagnosing errors in student work. Identify the EXACT point where the logic breaks down. For core_concept: explain using a simple everyday analogy a child could understand — no jargon, plain language only. If the image is NOT STEM student working or is too blurry, set input_status accordingly. You MUST use the diagnose_error tool.${MATH}`;
+      ? `You are an expert STEM tutor. Break down the student's question step by step. For core_concept: explain using a simple everyday analogy a child could understand — no jargon, plain language only. If the image is NOT a STEM question or is too blurry, set input_status accordingly. You MUST use the guide_question tool. BOUNDARY CONDITION RULE: If the question specifies an interval with ≤ or ≥ (inclusive), preserve this notation throughout. Check boundary values (like x=0 or x=360) explicitly if the interval is inclusive. Do NOT change ≤ to < or ≥ to >.${MATH}`
+      : `You are an expert STEM tutor specializing in diagnosing errors in student work. Identify the EXACT point where the logic breaks down. For core_concept: explain using a simple everyday analogy a child could understand — no jargon, plain language only. If the image is NOT STEM student working or is too blurry, set input_status accordingly. You MUST use the diagnose_error tool. BOUNDARY CONDITION RULE: If the question specifies an interval with ≤ or ≥ (inclusive), preserve this notation throughout. Check boundary values (like x=0 or x=360) explicitly if the interval is inclusive. Do NOT change ≤ to < or ≥ to >.${MATH}`;
 
     const tools = isGuide ? [{
       name: "guide_question",
@@ -192,7 +192,7 @@ Deno.serve(async (req: Request) => {
           what_happened: { type: "string", description: "2-3 sentences about this specific problem. Reference actual numbers/expressions." },
           core_concept: { type: "string", description: "2-3 sentences explaining the concept using a simple everyday analogy a child could understand. No jargon. Plain language only. Under 60 words." },
           recognition_cue: { type: "string", description: "2 sentences. 'When you see...' signal, first step, top trap." },
-          steps: { type: "array", items: { type: "string" }, description: "Step-by-step solution. $...$ inline math, $$...$$ display." },
+          steps: { type: "array", items: { type: "string" }, description: "Step-by-step solution. $...$ inline math, $$...$$ display. If the question has interval constraints (e.g. 0° ≤ x ≤ 360°), check boundary values explicitly." },
           practice_problems: {
             type: "array",
             items: { type: "object", properties: { id: { type: "number" }, question: { type: "string" }, answer: { type: "string" } }, required: ["id", "question", "answer"] },

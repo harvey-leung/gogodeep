@@ -5,6 +5,7 @@ const corsHeaders = {
 };
 
 const WHALE_CREDIT_LIMIT = 100;
+const MAX_MESSAGES_PER_MINUTE = 3;
 
 // Variable cost: 8–15 credits based on message length, giving uneven %
 function messageCost(text: string): number {
@@ -30,7 +31,9 @@ Deno.serve(async (req: Request) => {
     let userId: string | null = null;
     let plan = "free";
     let currentCredits = 0;
+    let minuteCount = 0;
     const today = new Date().toISOString().split("T")[0];
+    const currentMinute = Math.floor(Date.now() / 60000);
 
     if (jwt) {
       // Identify user from JWT
@@ -41,9 +44,9 @@ Deno.serve(async (req: Request) => {
       userId = userData?.id ?? null;
 
       if (userId) {
-        // Fetch profile
+        // Fetch profile once with all needed fields
         const profileRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=plan,whale_chat_credits,whale_chat_date`,
+          `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=plan,whale_chat_credits,whale_chat_date,whale_chat_minute_count,whale_chat_minute`,
           { headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY } }
         );
         const profiles = await profileRes.json();
@@ -53,8 +56,23 @@ Deno.serve(async (req: Request) => {
           plan = profile.plan ?? "free";
           const isNewDay = profile.whale_chat_date !== today;
           currentCredits = isNewDay ? 0 : (profile.whale_chat_credits ?? 0);
+
+          // Check per-minute throttle
+          const lastMinute = profile.whale_chat_minute ?? 0;
+          minuteCount = lastMinute === currentMinute ? (profile.whale_chat_minute_count ?? 0) : 0;
         }
       }
+    }
+
+    // Per-minute throttle for free users: max 3 msgs/minute
+    if (plan !== "deep" && userId && minuteCount >= MAX_MESSAGES_PER_MINUTE) {
+      return new Response(
+        JSON.stringify({
+          error: "rate_limited",
+          message: "You're sending messages too quickly. Please wait a moment.",
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // Enforce limit for non-deep users
@@ -128,7 +146,12 @@ Answer academic questions (maths, physics, chemistry, biology, etc.) using the s
           "Content-Type": "application/json",
           "Prefer": "return=minimal",
         },
-        body: JSON.stringify({ whale_chat_credits: newCredits, whale_chat_date: today }),
+        body: JSON.stringify({
+          whale_chat_credits: newCredits,
+          whale_chat_date: today,
+          whale_chat_minute_count: minuteCount + 1,
+          whale_chat_minute: currentMinute,
+        }),
       });
     }
 
@@ -137,6 +160,7 @@ Answer academic questions (maths, physics, chemistry, biology, etc.) using the s
         reply,
         creditsUsed: plan === "deep" ? 0 : newCredits,
         creditsLimit: WHALE_CREDIT_LIMIT,
+        showPracticeButton: !!stepContext,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

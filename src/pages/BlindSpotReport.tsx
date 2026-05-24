@@ -218,7 +218,7 @@ function UpgradeDialog({ open, onClose, deep = false }: { open: boolean; onClose
 
 type MCState = { shuffled: string[]; correctIdx: number; selected: number | null };
 
-function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadingPractice, onAskWhale, userId }: {
+function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadingPractice, onAskWhale, userId, moreLoadsCount, maxMoreLoads }: {
   problems: PracticeItem[];
   plan: string;
   onGenerateMore: () => Promise<void>;
@@ -226,6 +226,8 @@ function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadi
   isLoadingPractice: boolean;
   onAskWhale: (text: string) => void;
   userId: string | null;
+  moreLoadsCount: number;
+  maxMoreLoads: number;
 }) {
   const [mcState, setMcState] = useState<Record<number, MCState>>({});
   const [earnedIds, setEarnedIds] = useState<Set<number>>(new Set());
@@ -336,17 +338,23 @@ function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadi
         })}
       </div>
 
-      <Button
-        variant="outline"
-        className="mt-4 w-full border-border"
-        disabled={isGeneratingMore}
-        onClick={onGenerateMore}
-      >
-        {isGeneratingMore
-          ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          : <ChevronRight className="mr-2 h-4 w-4" />}
-        {isGeneratingMore ? "Generating…" : "Generate more questions"}
-      </Button>
+      {moreLoadsCount >= maxMoreLoads ? (
+        <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4 text-center">
+          <p className="text-sm text-muted-foreground">You've reached the maximum practice problems. Master these first!</p>
+        </div>
+      ) : (
+        <Button
+          variant="outline"
+          className="mt-4 w-full border-border"
+          disabled={isGeneratingMore}
+          onClick={onGenerateMore}
+        >
+          {isGeneratingMore
+            ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            : <ChevronRight className="mr-2 h-4 w-4" />}
+          {isGeneratingMore ? "Generating…" : "Generate more questions"}
+        </Button>
+      )}
     </>
   );
 }
@@ -892,9 +900,33 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-3 py-8 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm">Generating steps…</span>
+      <div className="space-y-4">
+        {imageSrc && (
+          <div className="rounded-xl border border-border bg-secondary/40 p-2 flex items-center justify-center">
+            <img src={imageSrc} alt="Your question" className="max-h-56 w-full rounded-lg object-contain" />
+          </div>
+        )}
+        {inputText && (
+          <div className="rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
+            <p className="whitespace-pre-wrap leading-relaxed">{inputText}</p>
+          </div>
+        )}
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-lg border border-primary/20 bg-primary/5 p-4 animate-pulse">
+              <div className="flex items-start gap-3">
+                <div className="h-6 w-6 rounded-full bg-primary/20 shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-primary/10 rounded w-3/4" />
+                  <div className="h-4 bg-primary/10 rounded w-1/2" />
+                </div>
+              </div>
+              <div className="mt-3 border-t border-primary/10 pt-3">
+                <div className="h-3 bg-primary/10 rounded w-1/4" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -1070,6 +1102,7 @@ const BlindSpotReport = () => {
   const [revealedSteps, setRevealedSteps] = useState(1);
   const [extraProblems, setExtraProblems] = useState<PracticeItem[]>([]);
   const [isGeneratingMore, setIsGeneratingMore] = useState(false);
+  const [moreLoadsCount, setMoreLoadsCount] = useState(0);
   const [lazyConceptData, setLazyConceptData] = useState<{ core_concept?: string; recognition_cue?: string } | null>(null);
   const [lazyPractice, setLazyPractice] = useState<PracticeItem[] | null>(null);
   const [lazySteps, setLazySteps] = useState<string[] | null>(null);
@@ -1090,6 +1123,13 @@ const BlindSpotReport = () => {
       if (imageSrc?.startsWith("blob:")) URL.revokeObjectURL(imageSrc);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for practice tab trigger from Blue chat
+  useEffect(() => {
+    const handleScrollToPractice = () => setActiveTab("practice");
+    window.addEventListener("scroll-to-practice-tab", handleScrollToPractice);
+    return () => window.removeEventListener("scroll-to-practice-tab", handleScrollToPractice);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1210,8 +1250,9 @@ const BlindSpotReport = () => {
   }, [activeTab, planLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
+  const MAX_MORE_LOADS = 10;
   const generateMoreProblems = useCallback(async () => {
-    if (isGeneratingMore) return;
+    if (isGeneratingMore || moreLoadsCount >= MAX_MORE_LOADS) return;
     setIsGeneratingMore(true);
     const basePractice = lazyPractice ?? (Array.isArray(diagnosis?.practice_problems) ? diagnosis.practice_problems : []);
     const allProblems = [...basePractice, ...extraProblems];
@@ -1226,7 +1267,8 @@ const BlindSpotReport = () => {
     }
     const newProblems: PracticeItem[] = (data as any)?.practice_problems ?? [];
     setExtraProblems((prev) => [...prev, ...newProblems]);
-  }, [diagnosis, extraProblems, isGeneratingMore]);
+    setMoreLoadsCount((prev) => prev + 1);
+  }, [diagnosis, extraProblems, isGeneratingMore, moreLoadsCount]);
 
   if (!diagnosis) {
     return (
@@ -1394,6 +1436,8 @@ const BlindSpotReport = () => {
                   isLoadingPractice={loadingPractice}
                   onAskWhale={askWhale}
                   userId={userId}
+                  moreLoadsCount={moreLoadsCount}
+                  maxMoreLoads={MAX_MORE_LOADS}
                 />
               )}
             </div>
