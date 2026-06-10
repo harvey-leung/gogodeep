@@ -553,7 +553,10 @@ const DiagnosticLab = () => {
         }
       `}</style>
 
-      <div className="mx-auto max-w-2xl px-4 pt-12 pb-6" data-feature="ai-scanner-for-hard-stem-questions">
+      <div
+        className="mx-auto max-w-2xl px-4 pt-12 pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both"
+        data-feature="ai-scanner-for-hard-stem-questions"
+      >
         {/* Page header — matches Stream tab style */}
         <div className="flex items-start justify-between gap-4 mb-8">
           <div className="flex items-center gap-3">

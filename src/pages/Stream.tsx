@@ -338,6 +338,8 @@ export default function Stream() {
 
   // Goal phase
   const [goal, setGoal] = useState("");
+  const [goalError, setGoalError] = useState<string | null>(null);
+  const [validatingGoal, setValidatingGoal] = useState(false);
 
   // Intake phase
   const [intakeQuestions, setIntakeQuestions] = useState<IntakeQuestion[]>([]);
@@ -463,7 +465,19 @@ export default function Stream() {
   }
 
   async function submitGoal() {
-    if (!goal.trim()) return;
+    if (!goal.trim() || validatingGoal) return;
+    setGoalError(null);
+    setValidatingGoal(true);
+    try {
+      const data = await callStreamGenerate({ action: "validate_goal", goal: goal.trim() });
+      if (data?.valid === false) {
+        setGoalError(data.reason || "That goal's a bit too vague — try adding what subject, skill, or exam you're focusing on.");
+        setValidatingGoal(false);
+        return;
+      }
+    } catch { /* if validation itself fails, let the user proceed */ }
+    setValidatingGoal(false);
+
     setGenerationStage("intake");
     setPhase("generating");
     let questions: IntakeQuestion[] = FALLBACK_INTAKE;
@@ -620,12 +634,18 @@ export default function Stream() {
     if (!qs.length) {
       try {
         const { data } = await supabase.functions.invoke("generate-quiz", { body: { topics: allTopics.slice(0, 5) } });
-        qs = (data?.questions ?? []).map((q: any) => ({
-          ...q, level: currentLevel, topic: q.topic ?? allTopics[0] ?? "General",
+        const lo = Math.max(1, currentLevel - 2);
+        const hi = Math.min(10, currentLevel + 2);
+        const raw = data?.questions ?? [];
+        qs = raw.map((q: any, i: number) => ({
+          ...q,
+          level: raw.length > 1 ? Math.round(lo + (i * (hi - lo)) / (raw.length - 1)) : currentLevel,
+          topic: q.topic ?? allTopics[0] ?? "General",
         }));
       } catch { /* no questions */ }
     }
 
+    qs = [...qs].sort((a, b) => a.level - b.level);
     setPracticeQuestions(qs);
 
     // Only save on first creation — not when retrying or reopening
@@ -683,9 +703,18 @@ export default function Stream() {
         if (!qs.length) {
           try {
             const { data } = await supabase.functions.invoke("generate-quiz", { body: { topics: allTopics.slice(0, 5) } });
-            qs = (data?.questions ?? []).map((q: any) => ({ ...q, level: s.currentLevel, topic: q.topic ?? allTopics[0] ?? "General" }));
+            const lvl = s.currentLevel ?? 5;
+            const lo = Math.max(1, lvl - 2);
+            const hi = Math.min(10, lvl + 2);
+            const raw = data?.questions ?? [];
+            qs = raw.map((q: any, i: number) => ({
+              ...q,
+              level: raw.length > 1 ? Math.round(lo + (i * (hi - lo)) / (raw.length - 1)) : lvl,
+              topic: q.topic ?? allTopics[0] ?? "General",
+            }));
           } catch {}
         }
+        qs = [...qs].sort((a, b) => a.level - b.level);
         setPracticeQuestions(qs);
         if (qs.length) {
           const updated = streams.map((st) => st.id === s.id ? { ...st, cachedQuestions: qs } : st);
@@ -888,17 +917,33 @@ export default function Stream() {
               </p>
             </div>
 
-            <textarea
-              ref={goalRef}
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && goal.trim()) submitGoal();
-              }}
-              placeholder="e.g. I want to learn how to factor quadratic equations"
-              rows={4}
-              className="w-full resize-none rounded-2xl border border-border bg-card/60 px-6 py-4 text-lg text-foreground placeholder:text-muted-foreground/40 focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all"
-            />
+            <div className="flex flex-col gap-2">
+              <textarea
+                ref={goalRef}
+                value={goal}
+                onChange={(e) => { setGoal(e.target.value); if (goalError) setGoalError(null); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && goal.trim()) submitGoal();
+                }}
+                placeholder="e.g. I want to learn how to factor quadratic equations"
+                rows={4}
+                className={cn(
+                  "w-full resize-none rounded-2xl border bg-card/60 px-6 py-4 text-lg text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 transition-all",
+                  goalError
+                    ? "border-destructive/60 focus:border-destructive/60 focus:ring-destructive/40"
+                    : "border-border focus:border-primary/60 focus:ring-primary/40"
+                )}
+              />
+              {goalError && (
+                <motion.p
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-sm text-destructive"
+                >
+                  {goalError}
+                </motion.p>
+              )}
+            </div>
 
             <div className="flex items-center justify-between">
               <button
@@ -909,11 +954,11 @@ export default function Stream() {
               </button>
               <div className="flex flex-col items-end gap-1">
                 <button
-                  disabled={!goal.trim()}
+                  disabled={!goal.trim() || validatingGoal}
                   onClick={submitGoal}
                   className="group flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-base font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
                 >
-                  Continue
+                  {validatingGoal ? "Checking..." : "Continue"}
                   <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                 </button>
                 <p className="text-xs text-muted-foreground/40">⌘ Enter to continue</p>
@@ -1242,7 +1287,33 @@ export default function Stream() {
     }
 
     const dq = diagnosticQuestions[diagnosticIndex];
-    if (!dq) return null;
+    if (!dq) {
+      return (
+        <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 text-center">
+          <motion.div {...fadeUp} className="flex flex-col items-center gap-6 max-w-md">
+            <WhaleAvatar size="lg" />
+            <div className="space-y-2">
+              <h3 className="text-2xl font-bold text-foreground">Blue couldn't find your depth</h3>
+              <p className="text-muted-foreground">Something went wrong generating your diagnostic questions. Let's try that again.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setPhase("program")}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                ← Back
+              </button>
+              <button
+                onClick={startDiagnostic}
+                className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+              >
+                Retry
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      );
+    }
 
     return (
       <div className="relative z-10 min-h-screen flex flex-col items-start justify-center px-4 py-12">

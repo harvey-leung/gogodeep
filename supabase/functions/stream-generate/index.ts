@@ -4,10 +4,11 @@ const corsHeaders = {
 };
 
 // Actions:
+//   validate_goal     - given goal string, return whether it's specific enough to build on
 //   intake_questions  - given goal string, return 3 intake questions
 //   program           - given goal + intake answers, return curriculum
 //   diagnostic        - given goal + program topics, return 6 questions at levels 1-10
-//   practice          - given goal + level + topics, return 6 questions at that level
+//   practice          - given goal + level + topics, return 6 questions spanning easy-hard around that level
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -71,6 +72,25 @@ Deno.serve(async (req: Request) => {
       if (!toolUse) throw new Error("No tool_use in response");
       return toolUse.input;
     };
+
+    if (action === "validate_goal") {
+      const result = await anthropicCall(
+        "You are Blue, a friendly study whale. Decide whether a student's stated learning goal is specific enough to build a real curriculum and generate concrete practice questions from. Reject goals that are too vague, generic, or contentless to plan around (e.g. 'get smarter', 'school stuff', 'math', 'be better', 'idk', random text). Accept goals that name a subject, skill, exam, or topic — even broad ones like 'algebra' or 'Spanish' are fine as long as they point to an actual field of study.",
+        `Student's stated learning goal: "${goal}"\n\nIs this specific enough to build a personalized study plan and real, concrete practice questions around? Respond with valid=true/false. If false, give a short, friendly one-sentence reason plus an example of a clearer goal.`,
+        "validate_goal",
+        {
+          type: "object",
+          properties: {
+            valid: { type: "boolean" },
+            reason: { type: "string", description: "If invalid, a short friendly message telling the student their goal is too vague and how to clarify it. Empty string if valid." },
+          },
+          required: ["valid", "reason"],
+        }
+      );
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (action === "intake_questions") {
       const result = await anthropicCall(
@@ -180,9 +200,11 @@ Deno.serve(async (req: Request) => {
     if (action === "practice") {
       const topicList = (topics ?? []).slice(0, 6).join(", ");
       const targetLevel = level ?? 5;
+      const lo = Math.max(1, targetLevel - 2);
+      const hi = Math.min(10, targetLevel + 2);
       const result = await anthropicCall(
-        `You are Blue, generating personalized practice questions. Questions MUST be specific, real problems about the student's subject — not vague or generic. Calibrate difficulty exactly to the student's level (${targetLevel}/10). Level 1 = very basic, level 10 = expert. Use concrete, subject-specific problems.`,
-        `Goal: "${goal}"\nTopics: ${topicList}\nStudent level: ${targetLevel}/10\n\nGenerate 6 practice questions at level ${targetLevel} (±1) that are real, specific questions about "${goal}". Mix the topics. Each question must be answerable with a clear correct answer.`,
+        `You are Blue, generating personalized practice questions. Questions MUST be specific, real problems about the student's subject — not vague or generic. The set should progress from EASY to HARD, spanning levels ${lo} to ${hi}, centered around the student's level (${targetLevel}/10). Level 1 = very basic, level 10 = expert. Use concrete, subject-specific problems. Sort the questions from easiest (lowest level) to hardest (highest level).`,
+        `Goal: "${goal}"\nTopics: ${topicList}\nStudent level: ${targetLevel}/10\n\nGenerate 6 practice questions about "${goal}" that progress from easy to hard, spanning levels ${lo} through ${hi} (assign each question a "level" in that range, with at least one question at each end of the range). Mix the topics. Each question must be real, specific, and answerable with a clear correct answer. Order the questions from easiest to hardest.`,
         "generate_practice",
         {
           type: "object",

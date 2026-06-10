@@ -40,3 +40,13 @@ entrypoint = "./functions/stripe-webhook/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/weekly-digest/index.ts"
+
+[functions.stream-generate]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/stream-generate/index.ts"
+
+[functions.generate-quiz]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/generate-quiz/index.ts"

@@ -2,7 +2,7 @@ import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Helmet } from "react-helmet-async";
-import { Aperture, Microscope, Compass, ArrowRight, Zap, ScanLine, BookOpen, Loader2, Flame, ChevronRight, ChevronLeft, ChevronDown, BrainCircuit, Lock, Settings2, Lightbulb, RefreshCw, Mail, Send, X } from "lucide-react";
+import { Aperture, Microscope, Compass, ArrowRight, Zap, ScanLine, BookOpen, Loader2, Flame, ChevronRight, ChevronLeft, ChevronDown, Waves, Lock, Settings2, Lightbulb, RefreshCw, Mail, Send, X } from "lucide-react";
 import { UnitCircle } from "@/components/interact/MathModels2";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -262,6 +262,7 @@ const Dashboard = ({ user }: { user: User }) => {
   const [quiz, setQuiz] = useState<QuizState | null>(null);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[] | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
+  const [quizGenError, setQuizGenError] = useState<"limit" | "error" | null>(null);
   const [showQuizConfig, setShowQuizConfig] = useState(false);
   const [quizConfig, setQuizConfig] = useState<QuizConfig>({ numQuestions: 10, typed: true, multipleChoice: true, trueOrFalse: true, selectedConcepts: [] });
   const [elapsedSecs, setElapsedSecs] = useState(0);
@@ -412,6 +413,38 @@ const Dashboard = ({ user }: { user: User }) => {
     return Array.from(concepts);
   };
 
+  const fetchRecapQuiz = useCallback((topics: string[]) => {
+    const today = new Date().toISOString().split("T")[0];
+    setQuizLoading(true);
+    setQuizQuestions(null);
+    setQuizGenError(null);
+    supabase.functions.invoke("generate-quiz", { body: { topics } }).then(({ data: result, error }) => {
+      setQuizLoading(false);
+      if (error || !Array.isArray(result?.questions) || !result.questions.length) {
+        console.error("[Quiz] generate-quiz failed:", error, result);
+        setQuizGenError(result?.error === "daily_quiz_limit" ? "limit" : "error");
+        return;
+      }
+      const questions: QuizQuestion[] = (result.questions as { topic: string; question: string; options: string[]; correct: number; explanation?: string }[]).map((q) => {
+        const correctAnswer = q.options[q.correct];
+        const shuffled = [...q.options].sort(() => Math.random() - 0.5);
+        return {
+          topic: q.topic,
+          question: q.question,
+          answer: q.explanation ? `${correctAnswer}\n\n${q.explanation}` : correctAnswer,
+          mode: "mc" as const,
+          mcOptions: shuffled,
+          mcCorrectIdx: shuffled.indexOf(correctAnswer),
+        };
+      });
+      setQuizQuestions(questions);
+      try {
+        localStorage.setItem(QUIZ_CACHE_D_KEY, today);
+        localStorage.setItem(QUIZ_CACHE_Q_KEY, JSON.stringify(questions));
+      } catch {}
+    });
+  }, []);
+
   // Generate recap quiz questions — only on new day, after completion, or when none exist
   useEffect(() => {
     if (!data || data.recentScans.length < 3) return;
@@ -439,32 +472,7 @@ const Dashboard = ({ user }: { user: User }) => {
 
     const topics = data.recentScans.slice(0, 5).map((s) => s.label).filter(Boolean);
     if (!topics.length) return;
-    setQuizLoading(true);
-    setQuizQuestions(null);
-    supabase.functions.invoke("generate-quiz", { body: { topics } }).then(({ data: result, error }) => {
-      setQuizLoading(false);
-      if (error || !Array.isArray(result?.questions) || !result.questions.length) {
-        console.error("[Quiz] generate-quiz failed:", error, result);
-        return;
-      }
-      const questions: QuizQuestion[] = (result.questions as { topic: string; question: string; options: string[]; correct: number; explanation?: string }[]).map((q) => {
-        const correctAnswer = q.options[q.correct];
-        const shuffled = [...q.options].sort(() => Math.random() - 0.5);
-        return {
-          topic: q.topic,
-          question: q.question,
-          answer: q.explanation ? `${correctAnswer}\n\n${q.explanation}` : correctAnswer,
-          mode: "mc" as const,
-          mcOptions: shuffled,
-          mcCorrectIdx: shuffled.indexOf(correctAnswer),
-        };
-      });
-      setQuizQuestions(questions);
-      try {
-        localStorage.setItem(QUIZ_CACHE_D_KEY, today);
-        localStorage.setItem(QUIZ_CACHE_Q_KEY, JSON.stringify(questions));
-      } catch {}
-    });
+    fetchRecapQuiz(topics);
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const quizActive = !!quiz && !quiz.showStats;
@@ -653,19 +661,47 @@ const Dashboard = ({ user }: { user: User }) => {
     return vals.length ? Math.max(...vals) : 0;
   })() : 0;
 
+  const [speechVariant] = useState(() => Math.floor(Math.random() * 4));
+  const pick = (arr: string[]) => arr[speechVariant % arr.length];
+
   const blueSpeech = (() => {
     if (!data) return "Loading your stats...";
     const { loginStreak, totalScans, usedToday, dailyLimit, weeklyScans } = data;
-    if (totalScans === 0) return "First problem = first win. Drop a screenshot.";
+    if (totalScans === 0) return pick([
+      "First problem = first win. Drop a screenshot.",
+      "Got something tricky? Let's break it down together.",
+      "One scan away from your first insight.",
+      "Show me what you're working on — I'll find the gap.",
+    ]);
     const ydayCount = weeklyScans[weeklyScans.length - 2]?.count ?? 1;
-    if (ydayCount === 0 && usedToday === 0) return "Haven't seen you in a day... miss you!";
-    if (usedToday === 0) return "Ready when you are. What's today's problem?";
+    if (ydayCount === 0 && usedToday === 0) return pick([
+      "Welcome back! Let's get to work.",
+      "Good to see you — let's dive in.",
+      "Ready to pick up where we left off?",
+      "Let's keep that momentum going. What are we tackling today?",
+    ]);
+    if (usedToday === 0) return pick([
+      "Ready when you are. What's today's problem?",
+      "Let's find today's win — drop a problem in.",
+      "Standing by. What are we solving first?",
+      "Bring on today's challenge.",
+    ]);
     if (dailyLimit && usedToday >= dailyLimit) return "Daily limit hit. Come back tomorrow — streak needs you.";
     if (loginStreak > 0 && loginStreak % 7 === 0) return `${loginStreak}-day streak. Badge earned!`;
     const left = dailyLimit ? dailyLimit - usedToday : null;
     if (left === 1) return "One more scan and you hit today's goal. Let's go.";
-    if (usedToday >= 2) return "On a roll today. Keep stacking.";
-    return "You've got this. Crush the next one.";
+    if (usedToday >= 2) return pick([
+      "On a roll today. Keep stacking.",
+      "Look at you go. One more?",
+      "Streak's heating up — nice work.",
+      "Crushing it. Keep the wins coming.",
+    ]);
+    return pick([
+      "You've got this. Crush the next one.",
+      "Onward — let's tackle the next one.",
+      "Nice. Ready for another?",
+      "Let's keep the streak alive.",
+    ]);
   })();
 
   const startDailyChallenge = () => {
@@ -722,7 +758,7 @@ const Dashboard = ({ user }: { user: User }) => {
       )}
 
       <div
-        className="relative min-h-screen pb-28"
+        className="relative min-h-screen"
         style={{
           opacity: heroPhase >= 1 ? 1 : 0,
           transform: heroPhase >= 1 ? "translateY(0)" : "translateY(32px)",
@@ -820,12 +856,38 @@ const Dashboard = ({ user }: { user: User }) => {
                   Get Deep
                 </button>
               ) : (data?.recentScans.length ?? 0) < 3 ? (
-                <span className="mt-auto text-[9px] text-muted-foreground">Need {3 - (data?.recentScans.length ?? 0)} more scans</span>
+                <button
+                  onClick={() => whaleToast.error(`Make ${3 - (data?.recentScans.length ?? 0)} more scan${3 - (data?.recentScans.length ?? 0) === 1 ? "" : "s"} for a recap quiz!`)}
+                  className="mt-auto w-full rounded-lg bg-secondary px-2 py-1.5 text-[9px] font-bold text-muted-foreground text-left transition-colors hover:text-foreground"
+                >
+                  Need {3 - (data?.recentScans.length ?? 0)} more scans
+                </button>
               ) : quizLoading ? (
                 <div className="mt-auto flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin text-muted-foreground" /></div>
               ) : (
-                <button onClick={() => startQuiz()} disabled={!quizQuestions?.length}
-                  className="mt-auto w-full rounded-lg bg-primary px-2 py-1.5 text-xs font-black text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-40">
+                <button
+                  onClick={() => {
+                    if (!quizQuestions?.length) {
+                      if (quizGenError === "limit") {
+                        whaleToast.error("You've already done today's recap quiz — come back tomorrow!");
+                      } else if (quizGenError === "error") {
+                        whaleToast.error("Couldn't put together your recap quiz. Tap again to retry.");
+                        const topics = data?.recentScans.slice(0, 5).map((s) => s.label).filter(Boolean) ?? [];
+                        if (topics.length) fetchRecapQuiz(topics);
+                      } else {
+                        whaleToast.error("Still putting your recap quiz together — give me a moment and try again!");
+                      }
+                      return;
+                    }
+                    startQuiz();
+                  }}
+                  className={cn(
+                    "mt-auto w-full rounded-lg px-2 py-1.5 text-xs font-black transition-all active:scale-95",
+                    quizQuestions?.length
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                      : "bg-secondary text-muted-foreground hover:text-foreground"
+                  )}
+                >
                   Start →
                 </button>
               )}
@@ -1001,11 +1063,17 @@ const Dashboard = ({ user }: { user: User }) => {
 
               {/* Speech bubble — top */}
               <div className="relative">
-                <div className="rounded-[18px] border-2 border-border bg-card px-5 py-3.5 text-center text-sm font-bold text-foreground shadow-[0_8px_32px_hsl(var(--primary)/0.10)] max-w-[210px]">
+                <div className="rounded-[18px] border border-border bg-secondary px-5 py-3.5 text-center text-sm font-bold text-foreground shadow-[0_8px_32px_hsl(var(--primary)/0.10)] max-w-[210px]">
                   {loading ? "…" : blueSpeech}
                 </div>
-                <div className="absolute -bottom-[13px] left-1/2 -translate-x-1/2 h-0 w-0 border-l-[10px] border-r-[10px] border-t-[14px] border-l-transparent border-r-transparent" style={{borderTopColor:"hsl(var(--border))"}} />
-                <div className="absolute -bottom-[11px] left-1/2 -translate-x-1/2 h-0 w-0 border-l-[9px] border-r-[9px] border-t-[12px] border-l-transparent border-r-transparent" style={{borderTopColor:"hsl(var(--card))"}} />
+                <div
+                  className="absolute -bottom-[7px] left-1/2 -translate-x-1/2 h-0 w-0"
+                  style={{
+                    borderLeft: "8px solid transparent",
+                    borderRight: "8px solid transparent",
+                    borderTop: "8px solid hsl(var(--secondary))",
+                  }}
+                />
               </div>
 
               {/* Blue + Upgrade — pushed to bottom so Blue's base aligns with stats */}
@@ -1032,11 +1100,8 @@ const Dashboard = ({ user }: { user: User }) => {
 
             {/* Dive back in */}
             <div className="rounded-2xl border border-border bg-card p-4">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3">
                 <p className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">Dive back in</p>
-                <button onClick={() => navigate("/dive")} className="text-[10px] font-black uppercase tracking-wider text-primary/60 hover:text-primary transition-colors">
-                  + New scan
-                </button>
               </div>
               {!loading && (data?.recentScans.length ?? 0) > 0 ? (
                 <div className="max-h-[176px] overflow-y-auto space-y-1.5">
@@ -1077,7 +1142,7 @@ const Dashboard = ({ user }: { user: User }) => {
               <p className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground mb-3">Stream</p>
               <div className="flex flex-1 flex-col items-center justify-center gap-4 py-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <BrainCircuit className="h-6 w-6" />
+                  <Waves className="h-6 w-6" />
                 </div>
                 <div className="text-center">
                   <p className="text-sm font-black text-foreground">Your personalised learning path</p>

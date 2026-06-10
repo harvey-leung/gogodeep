@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Helmet } from "react-helmet-async";
 import { useLocation, Link, useNavigate } from "react-router-dom";
 import {
@@ -1121,12 +1122,14 @@ function DeckReport({
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      {/* Segmented progress bar */}
+      {/* Segmented progress bar — practice questions get a distinct color so they stand out among the step segments */}
       <div className="flex gap-1 px-4 pt-3 pb-2 shrink-0">
-        {cards.map((_, i) => (
+        {cards.map((c, i) => (
           <div key={i} className={cn(
             "flex-1 h-1 rounded-full transition-all duration-300",
-            i < cardIndex ? "bg-primary" : i === cardIndex ? "bg-primary/60" : "bg-secondary"
+            c.type === "practice"
+              ? (i < cardIndex ? "bg-amber-500" : i === cardIndex ? "bg-amber-500/60" : "bg-amber-500/20")
+              : (i < cardIndex ? "bg-primary" : i === cardIndex ? "bg-primary/60" : "bg-secondary")
           )} />
         ))}
       </div>
@@ -1233,39 +1236,6 @@ function DeckReport({
                   </div>
                 )}
 
-                {/* Session overview — big numbers so it's impossible to miss */}
-                {(effectiveSteps.length > 0 || practice.length > 0) && (
-                  <div className="space-y-3 pt-1">
-                    <div className="flex gap-3">
-                      <div className="flex-1 rounded-2xl border border-border bg-card/60 p-5 text-center">
-                        <p className="text-4xl font-black text-foreground leading-none">
-                          {effectiveSteps.length}
-                        </p>
-                        <p className="mt-2 text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">
-                          Steps
-                        </p>
-                      </div>
-                      <div className="flex-1 rounded-2xl border border-primary/20 bg-primary/5 p-5 text-center">
-                        <p className="text-4xl font-black text-primary leading-none">
-                          {practice.length > 0 ? practice.length : (loadingPractice ? "…" : "–")}
-                        </p>
-                        <p className="mt-2 text-xs font-black uppercase tracking-[0.18em] text-primary/60">
-                          Practice Qs
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Skip straight to practice if questions are already loaded */}
-                    {practice.length > 0 && (
-                      <button
-                        onClick={() => jumpTo(1 + effectiveSteps.length)}
-                        className="w-full rounded-xl border border-border bg-secondary/40 py-3 text-sm font-black text-muted-foreground transition-all hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-                      >
-                        Skip to practice →
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
@@ -1318,9 +1288,9 @@ function DeckReport({
                 return (
                   <div className="space-y-3">
                     {header}
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">All steps</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Steps so far</p>
                     <div className="space-y-2.5">
-                      {effectiveSteps.map((stepText, i) => {
+                      {effectiveSteps.slice(0, idx + 1).map((stepText, i) => {
                         const clean = stepText.replace(/^Step\s+\d+:\s*/i, "").trim();
                         return (
                           <div
@@ -1363,48 +1333,53 @@ function DeckReport({
                     </div>
                   )}
 
-                  {/* Current step — full prominence. Frame stays static; only inner content slides. */}
-                  <div className="rounded-2xl border border-primary/25 bg-card p-5 shadow-[0_0_24px_hsl(var(--primary)/0.08)]">
-                    <div
-                      key={idx}
-                      className={cn(
-                        "animate-in fade-in duration-200 fill-mode-both",
-                        animDir.current === 1 ? "slide-in-from-right-4" : "slide-in-from-left-4"
-                      )}
-                    >
-                      <div className="flex items-center gap-3 mb-5">
-                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-black text-primary-foreground shadow-[0_0_20px_hsl(var(--primary)/0.4)]">
-                          {idx + 1}
-                        </span>
-                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-muted-foreground">
-                          Step {idx + 1} of {effectiveSteps.length}
-                        </p>
-                      </div>
-                      <div className="space-y-4">
-                        {segments.map((seg, si) => {
-                          const trimmed = seg.trim();
-                          if (!trimmed) return null;
-                          if (trimmed.startsWith("$$") && trimmed.endsWith("$$")) {
-                            return (
-                              <div key={si} className="rounded-xl border border-primary/25 bg-primary/8 px-4 py-4 text-center overflow-x-auto">
-                                <RichText text={trimmed} />
-                              </div>
-                            );
-                          }
-                          return trimmed.split("\n").filter(l => l.trim()).map((line, li) => (
-                            <p key={`${si}-${li}`} className="text-[16px] leading-relaxed text-foreground">
-                              <RichText text={line} />
+                  {/* Current step — frame stays static; new step slides in as the old one slides out. */}
+                  <div className="rounded-2xl border border-primary/25 bg-card shadow-[0_0_24px_hsl(var(--primary)/0.08)]">
+                    <div className="relative overflow-hidden rounded-2xl">
+                      <AnimatePresence mode="popLayout" initial={false}>
+                        <motion.div
+                          key={idx}
+                          initial={{ x: animDir.current === 1 ? 60 : -60, opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          exit={{ x: animDir.current === 1 ? -60 : 60, opacity: 0 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
+                          className="p-5"
+                        >
+                          <div className="flex items-center gap-3 mb-5">
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-black text-primary-foreground shadow-[0_0_20px_hsl(var(--primary)/0.4)]">
+                              {idx + 1}
+                            </span>
+                            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                              Step {idx + 1} of {effectiveSteps.length}
                             </p>
-                          ));
-                        })}
-                      </div>
-                      <button
-                        onClick={() => onAskWhale(`Explain step ${idx + 1}: ${cleanText}`)}
-                        className="mt-5 flex items-center gap-2 rounded-xl border border-border px-3 py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-                      >
-                        <img src="/blue.png" alt="" draggable={false} className="whale-img h-4 w-4 rounded-full object-cover shrink-0" />
-                        Ask Blue about this step
-                      </button>
+                          </div>
+                          <div className="space-y-4">
+                            {segments.map((seg, si) => {
+                              const trimmed = seg.trim();
+                              if (!trimmed) return null;
+                              if (trimmed.startsWith("$$") && trimmed.endsWith("$$")) {
+                                return (
+                                  <div key={si} className="rounded-xl border border-primary/25 bg-primary/8 px-4 py-4 text-center overflow-x-auto">
+                                    <RichText text={trimmed} />
+                                  </div>
+                                );
+                              }
+                              return trimmed.split("\n").filter(l => l.trim()).map((line, li) => (
+                                <p key={`${si}-${li}`} className="text-[16px] leading-relaxed text-foreground">
+                                  <RichText text={line} />
+                                </p>
+                              ));
+                            })}
+                          </div>
+                          <button
+                            onClick={() => onAskWhale(`Explain step ${idx + 1}: ${cleanText}`)}
+                            className="mt-5 flex items-center gap-2 rounded-xl border border-border px-3 py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                          >
+                            <img src="/blue.png" alt="" draggable={false} className="whale-img h-4 w-4 rounded-full object-cover shrink-0" />
+                            Ask Blue about this step
+                          </button>
+                        </motion.div>
+                      </AnimatePresence>
                     </div>
                   </div>
 
@@ -1558,7 +1533,11 @@ function DeckReport({
               onClick={goNext}
               className="flex-1 h-11 rounded-xl bg-primary text-sm font-black text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.99]"
             >
-              {cardIndex >= totalCards - 2 ? "Finish →" : "Got it →"}
+              {cardIndex >= totalCards - 2
+                ? "Finish →"
+                : card.type === "step" && stepViewMode === "all"
+                  ? "Show next step →"
+                  : "Got it →"}
             </button>
           )}
           {isPracticeCard && !isAnswered && (
