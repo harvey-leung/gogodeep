@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard, LogOut, UserCircle2,
-  Moon, Sun, SunMoon, Settings, Mail, Menu, ChevronsLeft, ChevronDown, ScanLine,
+  Home, LogOut, UserCircle2,
+  Moon, Sun, SunMoon, Settings, Mail, Menu, ChevronsLeft, ChevronDown, ScanLine, Waves,
 } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,7 +30,7 @@ const COLOR_MODE_LABELS: Record<ColorMode, string> = {
   dark: "Dark", white: "Light", auto: "System",
 };
 
-const isWorkspacePath = (p: string) => p.startsWith("/workspace") || p.startsWith("/report");
+const isWorkspacePath = (p: string) => p.startsWith("/dive") || p.startsWith("/report");
 
 export default function AppSidebar({ user }: { user: User | null; onUserUpdate?: (u: User) => void }) {
   const location = useLocation();
@@ -39,12 +39,12 @@ export default function AppSidebar({ user }: { user: User | null; onUserUpdate?:
   const [plan, setPlan] = useState<string>("free");
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("main_sidebar_collapsed") === "true");
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const [workspaceExpanded, setWorkspaceExpanded] = useState(
+  const [diveExpanded, setDiveExpanded] = useState(
     () => isWorkspacePath(location.pathname)
   );
 
   useEffect(() => {
-    if (isWorkspacePath(location.pathname)) setWorkspaceExpanded(true);
+    if (isWorkspacePath(location.pathname)) setDiveExpanded(true);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -94,12 +94,17 @@ export default function AppSidebar({ user }: { user: User | null; onUserUpdate?:
           <Link to="/dashboard" title="Dashboard"
             className={cn("flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
               isDashboard ? "bg-accent text-foreground" : "text-foreground/70 hover:bg-accent hover:text-foreground")}>
-            <LayoutDashboard className="h-4 w-4" />
+            <Home className="h-4 w-4" />
           </Link>
-          <Link to="/workspace" title="Workspace"
+          <Link to="/dive" title="Dive"
             className={cn("flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
               isWorkspace ? "bg-accent text-foreground" : "text-foreground/70 hover:bg-accent hover:text-foreground")}>
             <ScanLine className="h-4 w-4" />
+          </Link>
+          <Link to="/stream" title="Stream"
+            className={cn("flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+              location.pathname.startsWith("/stream") ? "bg-accent text-foreground" : "text-foreground/70 hover:bg-accent hover:text-foreground")}>
+            <Waves className="h-4 w-4" />
           </Link>
         </div>
       ) : (
@@ -121,32 +126,32 @@ export default function AppSidebar({ user }: { user: User | null; onUserUpdate?:
           <div className="flex-1 overflow-y-auto min-h-0">
             <div className="space-y-0.5 px-3 py-1">
 
-              {/* Dashboard */}
+              {/* Home */}
               <Link to={user ? "/dashboard" : "/signup"}
                 className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                   isDashboard ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent hover:text-foreground")}>
-                <LayoutDashboard className="h-4 w-4 shrink-0" />
-                Dashboard
+                <Home className="h-4 w-4 shrink-0" />
+                Home
               </Link>
 
-              {/* Workspace — with expandable dropdown */}
+              {/* Dive — with expandable scan history */}
               <div>
                 <div className={cn("flex items-center rounded-xl transition-colors",
                   isWorkspace ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent hover:text-foreground")}>
-                  <Link to="/workspace" className="flex flex-1 items-center gap-3 px-3 py-2.5 text-sm font-medium">
+                  <Link to="/dive" className="flex flex-1 items-center gap-3 px-3 py-2.5 text-sm font-medium">
                     <ScanLine className="h-4 w-4 shrink-0" />
-                    Workspace
+                    Dive
                   </Link>
                   <button
-                    onClick={() => setWorkspaceExpanded((v) => !v)}
+                    onClick={() => setDiveExpanded((v) => !v)}
                     className="pr-3 py-2.5 text-muted-foreground transition-colors hover:text-foreground"
                   >
-                    <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", workspaceExpanded ? "rotate-0" : "-rotate-90")} />
+                    <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", diveExpanded ? "rotate-0" : "-rotate-90")} />
                   </button>
                 </div>
 
                 {/* Dropdown content */}
-                {workspaceExpanded && (
+                {diveExpanded && (
                   <div className="mt-0.5 ml-3 border-l border-border pl-2 pb-1">
                     {user ? (
                       <div className="relative max-h-52 overflow-y-auto">
@@ -154,11 +159,19 @@ export default function AppSidebar({ user }: { user: User | null; onUserUpdate?:
                         <div className="pointer-events-none sticky bottom-0 h-8 bg-gradient-to-t from-card to-transparent" />
                       </div>
                     ) : (
-                      <p className="px-1 py-2 text-[11px] text-muted-foreground/50">Your scans will appear here after your first scan.</p>
+                      <p className="px-1 py-2 text-[11px] text-muted-foreground/50">Your scans will appear here after your first dive.</p>
                     )}
                   </div>
                 )}
               </div>
+
+              {/* Stream */}
+              <Link to="/stream"
+                className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
+                  location.pathname.startsWith("/stream") ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent hover:text-foreground")}>
+                <Waves className="h-4 w-4 shrink-0" />
+                Stream
+              </Link>
 
               {/* Go Deep CTA */}
               {user && plan !== "deep" && (
@@ -235,6 +248,65 @@ export default function AppSidebar({ user }: { user: User | null; onUserUpdate?:
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+
+    {/* Mobile bottom nav — visible only below md, replaces the sidebar */}
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/95 backdrop-blur-xl">
+      <div
+        className="flex items-center justify-around px-2"
+        style={{ paddingTop: 8, paddingBottom: "max(env(safe-area-inset-bottom, 0px), 10px)" }}
+      >
+        <Link
+          to="/dashboard"
+          className={cn(
+            "flex flex-col items-center gap-0.5 px-5 py-2 rounded-xl transition-colors",
+            isDashboard ? "text-primary" : "text-muted-foreground"
+          )}
+        >
+          <Home className="h-5 w-5" />
+          <span className="text-[10px] font-semibold">Home</span>
+        </Link>
+        <Link
+          to="/dive"
+          className={cn(
+            "flex flex-col items-center gap-0.5 px-5 py-2 rounded-xl transition-colors",
+            isWorkspace ? "text-primary" : "text-muted-foreground"
+          )}
+        >
+          <ScanLine className="h-5 w-5" />
+          <span className="text-[10px] font-semibold">Dive</span>
+        </Link>
+        <Link
+          to="/stream"
+          className={cn(
+            "flex flex-col items-center gap-0.5 px-5 py-2 rounded-xl transition-colors",
+            location.pathname.startsWith("/stream") ? "text-primary" : "text-muted-foreground"
+          )}
+        >
+          <Waves className="h-5 w-5" />
+          <span className="text-[10px] font-semibold">Stream</span>
+        </Link>
+        {user ? (
+          <Link
+            to="/settings"
+            className={cn(
+              "flex flex-col items-center gap-0.5 px-5 py-2 rounded-xl transition-colors",
+              location.pathname.startsWith("/settings") ? "text-primary" : "text-muted-foreground"
+            )}
+          >
+            <UserCircle2 className="h-5 w-5" />
+            <span className="text-[10px] font-semibold">Profile</span>
+          </Link>
+        ) : (
+          <Link
+            to="/signup"
+            className="flex flex-col items-center gap-0.5 px-5 py-2 rounded-xl text-muted-foreground transition-colors"
+          >
+            <UserCircle2 className="h-5 w-5" />
+            <span className="text-[10px] font-semibold">Sign up</span>
+          </Link>
+        )}
+      </div>
+    </nav>
     </>
   );
 }

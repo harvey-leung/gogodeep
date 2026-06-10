@@ -18,13 +18,13 @@ const AppNav = ({ user }: { user: User | null | undefined }) => {
         <div className="flex items-center gap-2 shrink-0">
           {user ? (
             <Link to="/dashboard">
-              <Button className="h-11 px-7 text-base font-semibold rounded-xl bg-primary hover:bg-primary/90">
+              <Button className="h-9 px-4 sm:h-11 sm:px-7 text-sm sm:text-base font-semibold rounded-xl bg-primary hover:bg-primary/90">
                 Dashboard
               </Button>
             </Link>
           ) : (
-            <Link to="/workspace">
-              <Button className="h-11 px-7 text-base font-semibold rounded-xl bg-primary hover:bg-primary/90">
+            <Link to="/dive">
+              <Button className="h-9 px-4 sm:h-11 sm:px-7 text-sm sm:text-base font-semibold rounded-xl bg-primary hover:bg-primary/90">
                 Start Now
               </Button>
             </Link>

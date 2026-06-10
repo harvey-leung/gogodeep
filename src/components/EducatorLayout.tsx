@@ -13,6 +13,7 @@ export default function EducatorLayout({
   className,
   noSidebar = false,
   fullBleed = false,
+  noBorder = false,
 }: {
   title?: string;
   subtitle?: string;
@@ -21,16 +22,17 @@ export default function EducatorLayout({
   className?: string;
   noSidebar?: boolean;
   fullBleed?: boolean;
+  noBorder?: boolean;
 }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = React.useState(
-    () => localStorage.getItem("workspace_sidebar_collapsed") === "true"
+    () => localStorage.getItem("dive_sidebar_collapsed") === "true"
   );
 
   function toggleCollapsed() {
     const next = !collapsed;
     setCollapsed(next);
-    localStorage.setItem("workspace_sidebar_collapsed", String(next));
+    localStorage.setItem("dive_sidebar_collapsed", String(next));
   }
 
   return (
@@ -38,7 +40,7 @@ export default function EducatorLayout({
 
       {/* ── Sidebar ───────────────────────────────────────────────────────────── */}
       {!noSidebar && <aside className={cn(
-        "flex h-full flex-shrink-0 flex-col overflow-hidden border-r border-border bg-card transition-[width] duration-200",
+        "hidden lg:flex h-full flex-shrink-0 flex-col overflow-hidden border-r border-border bg-card transition-[width] duration-200",
         collapsed ? "w-12" : "w-60"
       )}>
 
@@ -58,7 +60,7 @@ export default function EducatorLayout({
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
               <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Workspace
+                Dive
               </span>
               <button
                 onClick={toggleCollapsed}
@@ -72,7 +74,7 @@ export default function EducatorLayout({
             {/* New scan button */}
             <div className="p-2">
               <button
-                onClick={() => navigate("/workspace")}
+                onClick={() => navigate("/dive")}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-primary/70 transition-colors hover:bg-primary/5 hover:text-primary"
               >
                 <ScanLine className="h-3.5 w-3.5 shrink-0" />
@@ -94,7 +96,7 @@ export default function EducatorLayout({
       <div className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", className)}>
         {/* Sticky top bar */}
         {(title || headerContent) && (
-          <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card/80 px-6 py-4 backdrop-blur-sm">
+          <div className={cn("sticky top-0 z-10 flex items-center gap-3 bg-card/80 px-6 py-4 backdrop-blur-sm", !noBorder && "border-b border-border")}>
             {headerContent ?? (
               <div className="min-w-0">
                 <h1 className="truncate text-2xl font-bold tracking-tight text-foreground">{title}</h1>
@@ -110,7 +112,7 @@ export default function EducatorLayout({
             {children}
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto pb-20 lg:pb-0">
             <div className="container max-w-6xl py-6 sm:py-8">
               {children}
             </div>

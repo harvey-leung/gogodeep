@@ -64,11 +64,12 @@ Rules:
 - If asked something off-topic, say so briefly and redirect to studying.
 
 Gogodeep features (for navigation questions):
-- Workspace: upload a screenshot or type a question → step-by-step solution
+- Dive: upload a screenshot or type a question → step-by-step solution
 - Report: Step by Step / Concept / Practice tabs
-- Dashboard: scan history, streak, recap quiz`;
+- Home: scan history, streak, recap quiz
+- Stream: design a personal learning path with Blue's help`;
 
-const GREETING = "Hey! I'm Blue 👋 Ask me anything — a concept you're stuck on, a question, or how Gogodeep works.";
+const GREETING = "Hey, I'm Blue 👋 Ask me anything. Concepts, questions, how Gogodeep works. I've got you.";
 
 const DEFAULT_W = 340;
 const DEFAULT_H = 460;
@@ -78,7 +79,7 @@ const EXPANDED_H = 640;
 export default function WhaleAssistant() {
   const navigate = useNavigate();
   const location = useLocation();
-  const hidden = location.pathname === "/report" || location.pathname === "/workspace";
+  const hidden = location.pathname === "/report" || location.pathname === "/dive";
   const [plan, setPlan] = useState<string | null>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [hasDoneScan, setHasDoneScan] = useState(() => !!localStorage.getItem("gogodeep_guest_scan_used"));
@@ -274,14 +275,16 @@ export default function WhaleAssistant() {
   function toggleExpand() {
     const next = !expanded;
     setExpanded(next);
-    // Reposition so panel stays near bottom-right
+    // Reposition after the resize animation completes so position glides in sync
     if (pos) {
       const newW = next ? EXPANDED_W : DEFAULT_W;
       const newH = next ? EXPANDED_H : DEFAULT_H;
-      setPos({
-        top: Math.max(8, window.innerHeight - 96 - newH),
-        left: Math.max(8, window.innerWidth - 24 - newW),
-      });
+      setTimeout(() => {
+        setPos({
+          top: Math.max(8, window.innerHeight - 96 - newH),
+          left: Math.max(8, window.innerWidth - 24 - newW),
+        });
+      }, 0);
     }
   }
 
@@ -365,18 +368,26 @@ export default function WhaleAssistant() {
           "fixed bottom-24 right-6 z-50 duration-300",
           bubbleFading ? "animate-out fade-out slide-out-to-bottom-2" : "animate-in fade-in slide-in-from-bottom-2"
         )}>
-          <div className={cn(
-            "max-w-[220px] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm shadow-lg",
-            bubble.type === "error"
-              ? "bg-destructive text-destructive-foreground"
-              : "bg-card border border-border text-foreground"
-          )}>
-            {bubble.message}
+          <div className="relative max-w-[220px]">
+            <div className={cn(
+              "rounded-2xl px-4 py-2.5 text-sm shadow-lg",
+              bubble.type === "error"
+                ? "bg-destructive text-destructive-foreground"
+                : "bg-primary text-primary-foreground"
+            )}>
+              {bubble.message}
+            </div>
+            {bubble.type !== "error" && (
+              <div
+                className="absolute -bottom-[7px] right-4 h-0 w-0"
+                style={{
+                  borderLeft: "7px solid transparent",
+                  borderRight: "7px solid transparent",
+                  borderTop: "7px solid hsl(var(--primary))",
+                }}
+              />
+            )}
           </div>
-          {/* Tail pointing to whale button — only shown for non-error bubbles */}
-          {bubble.type !== "error" && (
-            <div className="ml-auto mr-3 h-2 w-2 rotate-45 translate-y-[-1px] bg-card border-r border-b border-border" style={{ width: 8, height: 8 }} />
-          )}
         </div>
       )}
 
@@ -449,6 +460,7 @@ export default function WhaleAssistant() {
             maxHeight: "calc(100vh - 16px)",
             resize: "both",
             overflow: "hidden",
+            transition: "width 0.32s cubic-bezier(0.22,1,0.36,1), height 0.32s cubic-bezier(0.22,1,0.36,1), top 0.32s cubic-bezier(0.22,1,0.36,1), left 0.32s cubic-bezier(0.22,1,0.36,1)",
           }}
         >
           {/* Header — drag handle */}

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
-import { useNavigate, Link } from "react-router-dom";
-import { Upload, Loader2, Waves, ArrowRight, Lock, AlertTriangle } from "lucide-react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
+import { Upload, Loader2, Waves, ArrowRight, Lock, AlertTriangle, ScanLine } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { whaleToast } from "@/lib/whaleToast";
@@ -14,6 +14,25 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const SESSION_REPORT_KEY = "gogodeep_pending_report";
+const DIVE_PREVIEW_KEY = "gogodeep_dive_preview";
+
+function compressToDataUrl(file: File, maxPx = 1200, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(objUrl);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error("compress failed")); };
+    img.src = objUrl;
+  });
+}
 
 function useUtcResetCountdown() {
   const get = () => {
@@ -31,7 +50,7 @@ function useUtcResetCountdown() {
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
-async function notifyScanXP(userId: string, topic: string | null, errorCategory: string | null) {
+async function notifyScanXP(userId: string, topic: string | null, errorCategory: string | null, scanId?: string) {
   let history: { topic: string | null; error_category: string | null }[] = [];
   try {
     const { data } = await (supabase as any)
@@ -49,7 +68,7 @@ async function notifyScanXP(userId: string, topic: string | null, errorCategory:
   sessionStorage.removeItem("gogodeep_challenge_xp");
   const total = isChallenge && storedChallengeXP > 0
     ? storedChallengeXP
-    : calcDynamicScanXP(topic, errorCategory, history);
+    : calcDynamicScanXP(topic, errorCategory, history, scanId);
   if (isChallenge) addBonusXP(userId, CHALLENGE_BONUS_XP, "challenge");
   const msg = isChallenge ? `+${total} XP — challenge bonus!` : `+${total} XP`;
   window.dispatchEvent(new CustomEvent("whale-notify", { detail: { message: msg, type: "success" } }));
@@ -137,8 +156,13 @@ const DiagnosticLab = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [textInput, setTextInput] = useState("");
-  const [showTextInput, setShowTextInput] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(() => {
+    try { return sessionStorage.getItem(DIVE_PREVIEW_KEY); } catch { return null; }
+  });
+  const location = useLocation();
+  const prefillText = (location.state as any)?.prefillText as string | undefined;
+  const [textInput, setTextInput] = useState(prefillText ?? "");
+  const [showTextInput, setShowTextInput] = useState(!!prefillText);
   const [isChallengeMode, setIsChallengeMode] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [remainingCredits, setRemainingCredits] = useState<number | null>(null);
@@ -180,6 +204,13 @@ const DiagnosticLab = () => {
     } catch { /* localStorage unavailable — skip cooldown */ }
     return true;
   };
+
+  const storePreview = useCallback((file: File) => {
+    compressToDataUrl(file).then((dataUrl) => {
+      try { sessionStorage.setItem(DIVE_PREVIEW_KEY, dataUrl); } catch {}
+      setImagePreview(dataUrl);
+    }).catch(() => {});
+  }, []);
 
   const analyzeImage = useCallback(
     async (file: File) => {
@@ -234,14 +265,13 @@ const DiagnosticLab = () => {
         });
 
         if (error) {
-          const msg = (error as any)?.message ?? String(error);
-          whaleToast.error(`Scan failed: ${msg}`);
+          whaleToast.error("Scan failed. Please try again.");
           setIsAnalyzing(false);
           return;
         }
 
         if ((data as any)?.error) {
-          whaleToast.error(`Scan failed: ${(data as any).error}`);
+          whaleToast.error("Scan failed. Please try again.");
           setIsAnalyzing(false);
           return;
         }
@@ -290,7 +320,7 @@ const DiagnosticLab = () => {
 
         if (insertError) {
           console.error("error_logs insert failed:", insertError);
-          whaleToast.error(`Scan save failed: ${insertError.message}. Check Supabase RLS policies.`);
+          whaleToast.error("Couldn't save your scan. Please try again.");
         }
 
         const scanId = insertedScan?.id;
@@ -313,14 +343,13 @@ const DiagnosticLab = () => {
         } catch { /* ignore */ }
         window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
         // XP notification
-        notifyScanXP(user.id, topic, (data as any)?.error_category ?? null);
+        notifyScanXP(user.id, topic, (data as any)?.error_category ?? null, scanId);
         setScanComplete(true);
         await new Promise((r) => setTimeout(r, 580));
         navigate("/report", { state: { imageUrl: url, diagnosis: data, mode: "guide", scanId } });
       } catch (err: unknown) {
         console.error("Analysis failed:", err);
-        const msg = err instanceof Error ? err.message : String(err);
-        whaleToast.error(`Scan failed: ${msg}`);
+        whaleToast.error("Scan failed. Please try again.");
         setIsAnalyzing(false);
         setScanComplete(false);
       }
@@ -351,6 +380,9 @@ const DiagnosticLab = () => {
     }
 
     setIsAnalyzing(true);
+    // Clear image preview when scanning text
+    setImagePreview(null);
+    try { sessionStorage.removeItem(DIVE_PREVIEW_KEY); } catch {}
 
     try {
       if (!isGuest) {
@@ -368,13 +400,13 @@ const DiagnosticLab = () => {
       });
 
       if (error) {
-        whaleToast.error(`Scan failed: ${(error as any)?.message ?? String(error)}`);
+        whaleToast.error("Scan failed. Please try again.");
         setIsAnalyzing(false);
         return;
       }
 
       if ((data as any)?.error) {
-        whaleToast.error(`Scan failed: ${(data as any).error}`);
+        whaleToast.error("Scan failed. Please try again.");
         setIsAnalyzing(false);
         return;
       }
@@ -429,13 +461,13 @@ const DiagnosticLab = () => {
         sessionStorage.setItem(SESSION_REPORT_KEY, JSON.stringify({ diagnosis: data, mode: "guide", scanId, inputText: trimmed }));
       } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent("whale-scan-done", { detail: { context: whaleScanContext } }));
-      notifyScanXP(user.id, topic, (data as any)?.error_category ?? null);
+      notifyScanXP(user.id, topic, (data as any)?.error_category ?? null, scanId);
       setScanComplete(true);
       await new Promise((r) => setTimeout(r, 580));
       navigate("/report", { state: { imageUrl: null, inputText: trimmed, diagnosis: data, mode: "guide", scanId } });
     } catch (err: unknown) {
       console.error("Text analysis failed:", err);
-      whaleToast.error(`Scan failed: ${err instanceof Error ? err.message : String(err)}`);
+      whaleToast.error("Scan failed. Please try again.");
       setIsAnalyzing(false);
       setScanComplete(false);
     }
@@ -446,9 +478,10 @@ const DiagnosticLab = () => {
     if (file) {
       pendingFileStore.clear();
       setSelectedFile(file);
+      storePreview(file);
       analyzeImage(file);
     }
-  }, [analyzeImage]);
+  }, [analyzeImage, storePreview]);
 
   // Accept drops anywhere on the page
   useEffect(() => {
@@ -462,6 +495,7 @@ const DiagnosticLab = () => {
       if (!file) return;
       if (!TYPES.includes(file.type)) { whaleToast.error("Unsupported format. Please use JPG, PNG, WebP, or HEIC."); return; }
       setSelectedFile(file);
+      storePreview(file);
       analyzeImage(file);
     };
     document.addEventListener("dragover", onOver);
@@ -482,8 +516,9 @@ const DiagnosticLab = () => {
       return;
     }
     setSelectedFile(file);
+    storePreview(file);
     analyzeImage(file);
-  }, [analyzeImage]);
+  }, [analyzeImage, storePreview]);
 
   const onFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -493,15 +528,16 @@ const DiagnosticLab = () => {
       return;
     }
     setSelectedFile(file);
+    storePreview(file);
     analyzeImage(file);
-  }, [analyzeImage]);
+  }, [analyzeImage, storePreview]);
 
   return (
-    <EducatorLayout title="Workspace" subtitle="Drop it. Scan it. Understand it." noSidebar>
+    <EducatorLayout noSidebar>
       <Helmet>
-        <title>Workspace</title>
+        <title>Dive</title>
         <meta name="description" content="Upload a photo of your exam working or handwritten notes. Gogodeep analyses hard STEM questions, finds your error, and guides you step by step. Supports Physics HL, Math HL AA, AP Calculus BC, and AP Statistics." />
-        <link rel="canonical" href="https://gogodeep.com/workspace" />
+        <link rel="canonical" href="https://gogodeep.com/dive" />
       </Helmet>
 
       <style>{`
@@ -517,7 +553,17 @@ const DiagnosticLab = () => {
         }
       `}</style>
 
-      <div className="mx-auto max-w-2xl mt-6 sm:mt-10" data-feature="ai-scanner-for-hard-stem-questions">
+      <div className="mx-auto max-w-2xl px-4 pt-12 pb-6" data-feature="ai-scanner-for-hard-stem-questions">
+        {/* Page header — matches Stream tab style */}
+        <div className="flex items-start justify-between gap-4 mb-8">
+          <div className="flex items-center gap-3">
+            <ScanLine className="h-7 w-7 text-primary shrink-0" />
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-foreground">Dive</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">Drop it. Scan it. Understand it.</p>
+            </div>
+          </div>
+        </div>
 
         {/* ── Upload zone ── */}
         <label
@@ -563,6 +609,23 @@ const DiagnosticLab = () => {
               <Waves className="h-12 w-12 text-primary animate-pulse" />
               <p className="text-2xl font-black text-primary">Drop it!</p>
             </div>
+          ) : imagePreview ? (
+            /* ── Image preview — persists across navigation ── */
+            <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+              <img
+                src={imagePreview}
+                alt="Uploaded problem"
+                className="max-h-full max-w-full object-contain rounded-2xl p-3"
+                draggable={false}
+              />
+              {/* Replace overlay on hover */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-2xl bg-background/70 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border-2 border-primary/50 bg-primary/10">
+                  <Upload className="h-5 w-5 text-primary" />
+                </div>
+                <p className="text-sm font-bold text-foreground">Replace image</p>
+              </div>
+            </div>
           ) : (
             <div className="flex flex-col items-center gap-5 px-8 text-center z-10">
               {/* Animated upload icon */}
@@ -573,12 +636,8 @@ const DiagnosticLab = () => {
                 </div>
               </div>
               <div>
-                <p className="text-xl font-black tracking-tight text-foreground">
-                  {selectedFile ? selectedFile.name : "Drop your hardest problem"}
-                </p>
-                <p className="mt-1.5 text-sm text-muted-foreground">
-                  Maths · Physics · Chemistry · Biology
-                </p>
+                <p className="text-xl font-black tracking-tight text-foreground">Drop your hardest problem</p>
+                <p className="mt-1.5 text-sm text-muted-foreground">Maths · Physics · Chemistry · Biology</p>
               </div>
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/40">
                 <span>JPG</span><span>·</span><span>PNG</span><span>·</span><span>WebP</span><span>·</span><span>HEIC</span>
@@ -603,9 +662,8 @@ const DiagnosticLab = () => {
                 : "border-primary/20 bg-card shadow-[0_0_32px_hsl(var(--primary)/0.06)] focus-within:border-primary/40 focus-within:shadow-[0_0_40px_hsl(var(--primary)/0.10)]"
             }`}>
               {isChallengeMode && (
-                <div className="flex items-center justify-between bg-amber-400/10 border-b border-amber-400/20 px-5 py-2">
+                <div className="flex items-center bg-amber-400/10 border-b border-amber-400/20 px-5 py-2">
                   <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">Daily challenge</span>
-                  <span className="text-sm font-black text-amber-500">+{storedChallengeXP} XP</span>
                 </div>
               )}
               <textarea

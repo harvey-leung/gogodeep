@@ -1,20 +1,21 @@
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { BarChart, Bar, XAxis, ResponsiveContainer, Cell, Tooltip } from "recharts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Helmet } from "react-helmet-async";
-import { Aperture, Microscope, Compass, ArrowRight, Zap, ScanLine, BookOpen, Loader2, Flame, ChevronRight, ChevronDown, BrainCircuit, Lock, Settings2, Lightbulb, RefreshCw } from "lucide-react";
+import { Aperture, Microscope, Compass, ArrowRight, Zap, ScanLine, BookOpen, Loader2, Flame, ChevronRight, ChevronLeft, ChevronDown, BrainCircuit, Lock, Settings2, Lightbulb, RefreshCw, Mail, Send, X } from "lucide-react";
 import { UnitCircle } from "@/components/interact/MathModels2";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import PageTransition from "@/components/PageTransition";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { RichText } from "@/components/RichText";
 import gogodeepLogo from "@/assets/gogodeep-logo.png";
 import { supabase } from "@/integrations/supabase/client";
 import { SCAN_LIMITS, SCAN_CACHE_KEY } from "@/lib/supabase";
 import { FREE_FOR_ALL } from "@/lib/featureFlags";
 import { whaleToast } from "@/lib/whaleToast";
+import { cn } from "@/lib/utils";
 import { calcScanXP, calcRelativeScanXP, QUIZ_XP, CHALLENGE_BONUS_XP, addBonusXP, getBonusXPEntries } from "@/lib/xp";
 import type { User } from "@supabase/supabase-js";
 
@@ -86,7 +87,7 @@ function ScreenshotKeys() {
 
 const steps = [
   { renderIcon: () => <ScreenshotKeys />, step: "01", title: "Screenshot", desc: "Drop a screenshot of a difficult problem." },
-  { renderIcon: () => <span className="text-2xl font-black text-primary leading-none">!</span>, step: "02", title: "Repair", desc: "Gogodeep breaks the question down, and you'll understand it within minutes." },
+  { renderIcon: () => <span className="text-2xl font-black text-primary leading-none">!</span>, step: "02", title: "Learn", desc: "Gogodeep breaks the question down, and you'll understand it within minutes." },
 ];
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -286,7 +287,6 @@ const Dashboard = ({ user }: { user: User }) => {
     } catch { return false; }
   });
   const [scanAtBottom, setScanAtBottom] = useState(false);
-  const [quoteOffset, setQuoteOffset] = useState(0);
   const scanScrollRef = useRef<HTMLDivElement>(null);
   const resetCountdown = useUtcResetCountdown();
   const location = useLocation();
@@ -376,7 +376,7 @@ const Dashboard = ({ user }: { user: User }) => {
         const l = logs[i];
         if (l.created_at) {
           const d = l.created_at.split("T")[0];
-          dayXP[d] = (dayXP[d] ?? 0) + calcRelativeScanXP(l.specific_error_tag ?? l.topic, l.error_category, allLabels);
+          dayXP[d] = (dayXP[d] ?? 0) + calcRelativeScanXP(l.specific_error_tag ?? l.topic, l.error_category, allLabels, l.id);
         }
       }
       // Add bonus XP (quiz, challenge, practice) from localStorage
@@ -386,7 +386,7 @@ const Dashboard = ({ user }: { user: User }) => {
       }
       const todayStr = new Date().toISOString().split("T")[0];
       const todayXP = dayXP[todayStr] ?? 0;
-      const totalXP = logs.reduce((sum, l, i) => sum + calcRelativeScanXP(l.specific_error_tag ?? l.topic, l.error_category, allLabels), 0)
+      const totalXP = logs.reduce((sum, l) => sum + calcRelativeScanXP(l.specific_error_tag ?? l.topic, l.error_category, allLabels, l.id), 0)
         + bonusEntries.reduce((sum, e) => sum + e.xp, 0);
       const bestDayXP = Object.values(dayXP).length ? Math.max(...Object.values(dayXP)) : 0;
 
@@ -443,13 +443,8 @@ const Dashboard = ({ user }: { user: User }) => {
     setQuizQuestions(null);
     supabase.functions.invoke("generate-quiz", { body: { topics } }).then(({ data: result, error }) => {
       setQuizLoading(false);
-      if ((result as any)?.error === "daily_quiz_limit") {
-        whaleToast.error((result as any)?.message || "You've already generated a quiz today. Come back tomorrow!");
-        return;
-      }
       if (error || !Array.isArray(result?.questions) || !result.questions.length) {
         console.error("[Quiz] generate-quiz failed:", error, result);
-        whaleToast.error("Failed to generate quiz. Try again in a moment.");
         return;
       }
       const questions: QuizQuestion[] = (result.questions as { topic: string; question: string; options: string[]; correct: number; explanation?: string }[]).map((q) => {
@@ -622,7 +617,7 @@ const Dashboard = ({ user }: { user: User }) => {
       .eq("id", scanId)
       .single();
     if (error || !data?.diagnosis) {
-      navigate("/workspace");
+      navigate("/dive");
       return;
     }
     navigate("/report", { state: { diagnosis: data.diagnosis, mode: (data.diagnosis as any)?.mode ?? "guide", scanId } });
@@ -679,7 +674,7 @@ const Dashboard = ({ user }: { user: User }) => {
       sessionStorage.setItem("gogodeep_challenge_bonus", "1");
       sessionStorage.setItem("gogodeep_challenge_xp", String(calcScanXP(todayChallenge, null) + CHALLENGE_BONUS_XP));
     } catch {}
-    navigate("/workspace");
+    navigate("/dive");
   };
 
   function AchievementBadge({ xp }: { xp: number }) {
@@ -788,7 +783,7 @@ const Dashboard = ({ user }: { user: User }) => {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => navigate("/workspace")}
+                    <button onClick={() => navigate("/dive")}
                       className="flex-1 rounded-xl bg-amber-400 px-4 py-1.5 text-sm font-black text-black shadow-sm shadow-amber-400/30 transition-all hover:bg-amber-300 hover:scale-[1.02]">
                       Scan now →
                     </button>
@@ -820,9 +815,9 @@ const Dashboard = ({ user }: { user: User }) => {
               <span className="text-[9px] font-black uppercase tracking-[0.1em] text-muted-foreground whitespace-nowrap">Recap Quiz</span>
               <span className="text-sm font-black text-foreground leading-none">+{QUIZ_XP} XP</span>
               <span className="text-[10px] font-semibold text-muted-foreground/60">3–5 min</span>
-              {quizDoneToday ? (
-                <button disabled className="mt-auto w-full rounded-lg border border-green-500/30 bg-green-500/10 px-2 py-1.5 text-xs font-black text-green-400 cursor-default">
-                  Completed ✓
+              {quizDoneToday && data?.plan !== "deep" ? (
+                <button onClick={() => navigate("/pricing")} className="mt-auto w-full rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs font-black text-primary transition-all hover:bg-primary/10">
+                  Get Deep
                 </button>
               ) : (data?.recentScans.length ?? 0) < 3 ? (
                 <span className="mt-auto text-[9px] text-muted-foreground">Need {3 - (data?.recentScans.length ?? 0)} more scans</span>
@@ -1001,10 +996,10 @@ const Dashboard = ({ user }: { user: User }) => {
 
             </div>
 
-            {/* ── RIGHT: Blue — free-floating, no panel ───── */}
-            <div className="flex flex-col items-center justify-start gap-5 pt-2">
+            {/* ── RIGHT: Blue — bottom-aligned with stats ───── */}
+            <div className="flex flex-col items-center pt-2">
 
-              {/* Speech bubble */}
+              {/* Speech bubble — top */}
               <div className="relative">
                 <div className="rounded-[18px] border-2 border-border bg-card px-5 py-3.5 text-center text-sm font-bold text-foreground shadow-[0_8px_32px_hsl(var(--primary)/0.10)] max-w-[210px]">
                   {loading ? "…" : blueSpeech}
@@ -1013,85 +1008,90 @@ const Dashboard = ({ user }: { user: User }) => {
                 <div className="absolute -bottom-[11px] left-1/2 -translate-x-1/2 h-0 w-0 border-l-[9px] border-r-[9px] border-t-[12px] border-l-transparent border-r-transparent" style={{borderTopColor:"hsl(var(--card))"}} />
               </div>
 
-              {/* Blue — big, free */}
-              <img
-                src="/blue.png"
-                alt="Blue"
-                draggable={false}
-                className="blue-bob w-full max-w-[240px] object-contain select-none -mt-2"
-                style={{filter:"drop-shadow(0 16px 40px hsl(var(--primary)/0.20))"}}
-              />
-
-              {data?.plan !== "deep" && (
-                <button onClick={() => navigate("/pricing")} className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">
-                  Upgrade →
-                </button>
-              )}
+              {/* Blue + Upgrade — pushed to bottom so Blue's base aligns with stats */}
+              <div className="mt-auto flex flex-col items-center gap-3">
+                <img
+                  src="/blue.png"
+                  alt="Blue"
+                  draggable={false}
+                  className="blue-bob w-full max-w-[240px] object-contain select-none"
+                  style={{filter:"drop-shadow(0 16px 40px hsl(var(--primary)/0.20))"}}
+                />
+                {data?.plan !== "deep" && (
+                  <button onClick={() => navigate("/pricing")} className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">
+                    Upgrade →
+                  </button>
+                )}
+              </div>
 
             </div>
           </div>
 
-          {/* ── Full-width: weekly chart + quote ───────────── */}
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-start justify-between gap-6 mb-4">
-              <div className="shrink-0">
-                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground">This Week's Power</p>
-                <p className="mt-1 text-4xl font-black tracking-tighter text-foreground">
-                  {loading ? "—" : (data?.weeklyScans ?? []).reduce((s, d) => s + d.count, 0)}
-                  <span className="ml-2 text-sm font-semibold text-muted-foreground">scans</span>
-                </p>
+          {/* ── Full-width bottom: Dive back in + Stream ───── */}
+          <div className="mt-6 grid grid-cols-2 gap-6">
+
+            {/* Dive back in */}
+            <div className="rounded-2xl border border-border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">Dive back in</p>
+                <button onClick={() => navigate("/dive")} className="text-[10px] font-black uppercase tracking-wider text-primary/60 hover:text-primary transition-colors">
+                  + New scan
+                </button>
               </div>
-              {(() => {
-                const day = new Date().getUTCFullYear() * 1000 + Math.floor((Date.now() - new Date(new Date().getUTCFullYear(), 0, 0).getTime()) / 86400000);
-                const q = QUOTES[(day + quoteOffset) % QUOTES.length];
-                return (
-                  <div className="flex-1 text-right">
-                    <div className="flex items-start justify-end gap-2">
-                      <button onClick={() => setQuoteOffset(v => (v + 1) % QUOTES.length)}
-                        className="shrink-0 rounded-full p-1 text-muted-foreground/30 hover:text-muted-foreground transition-colors mt-1">
-                        <RefreshCw className="h-3 w-3" />
-                      </button>
-                      <p className="text-2xl font-black italic leading-snug text-foreground">"{q.text}"</p>
-                    </div>
-                    {q.author && q.author !== "Anonymous" && <p className="mt-1.5 text-xs font-semibold text-muted-foreground/60">— {q.author}</p>}
-                  </div>
-                );
-              })()}
+              {!loading && (data?.recentScans.length ?? 0) > 0 ? (
+                <div className="max-h-[176px] overflow-y-auto space-y-1.5">
+                  {data!.recentScans.slice(0, 6).map((scan) => (
+                    <button
+                      key={scan.id}
+                      onClick={() => handleScanClick(scan.id)}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-secondary/60"
+                    >
+                      <span className={`shrink-0 rounded-lg p-1.5 text-[10px] font-black uppercase leading-none ${
+                        scan.error_category?.toLowerCase() === "conceptual"
+                          ? "bg-primary/10 text-primary"
+                          : scan.error_category?.toLowerCase() === "calculation"
+                          ? "bg-amber-500/10 text-amber-500"
+                          : "bg-secondary text-muted-foreground"
+                      }`}>
+                        {scan.error_category?.slice(0, 3).toUpperCase() ?? "—"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                        {scan.label}
+                      </span>
+                      {scan.created_at && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                          {new Date(scan.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        </span>
+                      )}
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="py-6 text-center text-xs text-muted-foreground">No scans yet — start your first one above.</p>
+              )}
             </div>
-            <div className="h-28">
-              {!loading && data && (() => {
-                const MOCK = [1, 3, 2, 0, 4, 2, 1];
-                const isAllZero = data.weeklyScans.every(d => d.count === 0);
-                const chartData = data.weeklyScans.map((d, i) => ({
-                  ...d,
-                  count: isAllZero ? MOCK[i] ?? 0 : d.count,
-                }));
-                return (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} barSize={16} margin={{ top: 0, right: 0, left: -32, bottom: 0 }}>
-                      <Tooltip
-                        cursor={{ fill: "rgba(99,102,241,0.07)" }}
-                        content={({ active, payload }) => {
-                          if (!active || !payload?.length) return null;
-                          const val = Number(payload[0]?.value ?? 0);
-                          return (
-                            <div style={{ background: "rgba(15,23,42,0.92)", color: "#f8fafc", borderRadius: 7, padding: "5px 11px", fontSize: 12, fontWeight: 700, pointerEvents: "none", whiteSpace: "nowrap" }}>
-                              {isAllZero ? "no data yet" : `${val} scan${val !== 1 ? "s" : ""}`}
-                            </div>
-                          );
-                        }}
-                      />
-                      <XAxis dataKey="day" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))", fontWeight: 700 }} axisLine={false} tickLine={false} />
-                      <Bar dataKey="count" radius={[5, 5, 0, 0]}>
-                        {chartData.map((entry, i) => (
-                          <Cell key={i} fill={entry.count > 0 ? (isAllZero ? "hsl(var(--primary)/0.3)" : "hsl(var(--primary))") : "hsl(var(--secondary))"} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                );
-              })()}
+
+            {/* Stream */}
+            <div className="rounded-2xl border border-border bg-card p-4 flex flex-col">
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground mb-3">Stream</p>
+              <div className="flex flex-1 flex-col items-center justify-center gap-4 py-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <BrainCircuit className="h-6 w-6" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-black text-foreground">Your personalised learning path</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Blue maps out exactly what you need to study next, based on your scans.</p>
+                </div>
+                <button
+                  onClick={() => navigate("/stream")}
+                  className="rounded-xl bg-primary px-5 py-2 text-sm font-black text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  Start a stream →
+                </button>
+              </div>
             </div>
+
           </div>
 
         </div>
@@ -1100,23 +1100,7 @@ const Dashboard = ({ user }: { user: User }) => {
       {/* Quiz Dialog */}
       <Dialog open={!!quiz} onOpenChange={(open) => { if (!open) setQuiz(null); }}>
         <DialogContent className="border border-border bg-card sm:max-w-2xl p-0 overflow-hidden gap-0">
-          {quiz?.showStats ? (() => {
-            const isFirstCompletion = !quizDoneToday;
-            const isDeep = data?.plan === "deep";
-            if (isFirstCompletion) {
-              try {
-                const today = new Date().toISOString().split("T")[0];
-                addBonusXP(user.id, QUIZ_XP, "quiz");
-                if (!isDeep) {
-                  localStorage.setItem(QUIZ_DONE_KEY, today);
-                  setQuizDoneToday(true);
-                }
-                window.dispatchEvent(new CustomEvent("whale-notify", {
-                  detail: { message: `+${QUIZ_XP} XP — quiz complete!`, type: "success" },
-                }));
-              } catch {}
-            }
-            return (
+          {quiz?.showStats ? (
             <div className="flex flex-col items-center px-8 py-10 text-center">
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Quiz complete</p>
               <p className="mt-4 text-7xl font-extrabold text-foreground">
@@ -1131,14 +1115,12 @@ const Dashboard = ({ user }: { user: User }) => {
                 ))}
               </div>
               <div className="mt-8 flex gap-3">
-                <Button variant="outline" className="border-border" disabled={!isDeep} onClick={() => startQuizWithConfig(quizConfig)}>
-                  <RefreshCw className="mr-2 h-4 w-4" /> {isDeep ? "Next Quiz" : "Try Again"}
+                <Button variant="outline" className="border-border" onClick={() => startQuizWithConfig(quizConfig)}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Try Again
                 </Button>
                 <Button className="bg-primary hover:bg-primary/90" onClick={() => setQuiz(null)}>Done</Button>
               </div>
             </div>
-            );
-          })() : null
           ) : quiz ? (() => {
             const currentQ = quiz.questions[quiz.current];
             const advance = () => setQuiz((q) => {
@@ -1257,107 +1239,61 @@ const Dashboard = ({ user }: { user: User }) => {
 
 // ─── Landing page ─────────────────────────────────────────────────────────────
 
-const PHYSICS_STEPS = [
-  "Label the triangle: hypotenuse $= 10\\text{ cm}$, angle $\\theta = 35°$, and we want the side opposite $\\theta$.",
-  "The ratio linking the opposite side to the hypotenuse is sine: $\\sin\\theta = \\dfrac{\\text{opposite}}{\\text{hypotenuse}}$.",
-  "Substitute the known values: $\\sin(35°) = \\dfrac{x}{10}$.",
-  "Rearrange: $x = 10 \\times \\sin(35°)$.",
-  "Calculate: $x = 10 \\times 0.574 \\approx 5.74\\text{ cm}$.",
-];
-
-const PHYSICS_ELI5 = "Imagine you're on a ramp going up a hill. You know ==how steep the angle is== and ==how long the ramp is==. You want to find out how high you'd climb.\n\nA right triangle has three sides. The **longest one** is the ramp — we call it the **hypotenuse**. The side going straight up is what we want.\n\nThere's a simple recipe: ==sin(angle) = height ÷ ramp length==. So to find the height, multiply the ramp length by sin of the angle.\n\nHere: ramp = **10 cm**, angle = **35°**, so height = 10 × sin(35°) ≈ **5.74 cm**.";
-const PHYSICS_CORE_CONCEPT = "==SOH–CAH–TOA== is the shortcut for right-triangle trig:\n$$\\sin\\theta = \\frac{\\text{opp}}{\\text{hyp}}, \\quad \\cos\\theta = \\frac{\\text{adj}}{\\text{hyp}}, \\quad \\tan\\theta = \\frac{\\text{opp}}{\\text{adj}}$$\nPick the ratio that ==connects the side you know to the side you want==.\n\nThe **unit circle** extends these definitions beyond $90°$ by placing the angle on a circle of radius $1$.";
-const PHYSICS_RECOGNITION_CUE = "When a problem gives a right triangle with **one angle** and **one side**, reach for ==SOH–CAH–TOA==.\n\nIdentify which two sides are involved:\n**opp + hyp** → use ==sine==\n**adj + hyp** → use ==cosine==\n**opp + adj** → use ==tangent==\n\nRearrange to isolate the unknown, then evaluate with a calculator.";
-
-const PHYSICS_PRACTICE = [
+const PERCENT_STEPS: { step: string; tip: string }[] = [
   {
-    q: "A right triangle has hypotenuse $8\\text{ cm}$ and angle $\\theta = 40°$. Find the adjacent side.",
-    steps: [
-      "Adjacent and hypotenuse → use cosine: $\\cos\\theta = \\text{adj}/\\text{hyp}$.",
-      "$\\text{adj} = 8 \\times \\cos(40°) = 8 \\times 0.766 \\approx 6.13\\text{ cm}$.",
-    ],
+    step: 'The equation is in the form $ax^2 + bx + c = 0$, so we can factor.$$2x^2 - 5x - 3 = 0$$Here $a = 2$, $b = -5$, $c = -3$.',
+    tip: "Spotting a, b, and c first means you'll never lose track of which number goes where in the next steps.",
   },
   {
-    q: "A ladder leans against a wall at $60°$ to the ground. The ladder is $5\\text{ m}$ long. How high up the wall does it reach?",
-    steps: [
-      "The height is the side opposite $60°$; the ladder is the hypotenuse.",
-      "$\\text{height} = 5 \\times \\sin(60°) = 5 \\times \\tfrac{\\sqrt{3}}{2} \\approx 4.33\\text{ m}$.",
-    ],
+    step: 'Multiply $a \\times c = 2 \\times (-3) = -6$.\nFind two numbers that **multiply to −6** and **add to −5**.\nThose numbers are $-6$ and $+1$. ✓',
+    tip: "Looking for a pair that multiplies to a×c and adds to b is the whole trick behind splitting the middle term.",
   },
   {
-    q: "An angle of elevation is $25°$ and the opposite side is $6\\text{ m}$. Find the hypotenuse.",
-    steps: [
-      "Opposite and hypotenuse → $\\sin(25°) = 6/\\text{hyp}$.",
-      "$\\text{hyp} = 6 / \\sin(25°) = 6 / 0.423 \\approx 14.19\\text{ m}$.",
-    ],
+    step: 'Split the middle term using $-6x + x$:$$2x^2 - 6x + x - 3 = 0$$',
+    tip: "Splitting −5x into −6x + x doesn't change the equation — it just sets things up so we can group in pairs.",
+  },
+  {
+    step: 'Group and factor each pair:$$2x(x-3) + 1(x-3) = 0$$$$(2x+1)(x-3) = 0$$',
+    tip: "Notice both groups share the factor (x − 3) — that's what lets you pull it out and combine everything into one product.",
+  },
+  {
+    step: 'Set each factor to zero and solve:$$2x + 1 = 0 \\implies x = -\\tfrac{1}{2}$$$$x - 3 = 0 \\implies x = 3$$',
+    tip: "Each bracket can equal zero on its own — solve them separately and you'll land on both roots.",
   },
 ];
 
-const DEMO_STEPS = [
-  "Spot two different function types multiplied together: $x$ (algebraic) and $e^x$ (exponential). This calls for integration by parts.",
-  "By LIATE, choose $u = x$ and $dv = e^x\\,dx$, so $du = dx$ and $v = e^x$.",
-  "Apply the IBP formula: $\\displaystyle\\int x\\,e^x\\,dx = x e^x - \\int e^x\\,dx$.",
-  "Evaluate the remaining integral: $\\displaystyle\\int e^x\\,dx = e^x$.",
-  "Write the final answer: $\\displaystyle\\int x\\,e^x\\,dx = e^x(x-1) + C$.",
-];
-
-const DEMO_WHAT_HAPPENED = "The problem asks to evaluate $\\int x\\,e^x\\,dx$ — a polynomial multiplied by an exponential. This product of two different function types calls for integration by parts. Setting $u = x$ and $dv = e^x\\,dx$, the rule $\\int u\\,dv = uv - \\int v\\,du$ reduces the integral to one that can be solved directly.";
-const DEMO_CORE_CONCEPT = "Integration by parts is the reverse of the product rule. The formula $\\int u\\,dv = uv - \\int v\\,du$ trades one integral for a simpler one. Use LIATE to choose $u$: Logarithmic → Inverse trig → Algebraic → Trig → Exponential. The most common mistake is choosing $u$ as the exponential, which makes the new integral harder, not simpler.";
-const DEMO_RECOGNITION_CUE = "When you see two different function types multiplied under an integral — like $x e^x$ or $x\\sin(x)$ — use integration by parts. Apply LIATE: pick the algebraic term as $u$ when paired with an exponential or trig function. If $\\int v\\,du$ looks more complex than the original, swap $u$ and $dv$.";
-
-const DEMO_PRACTICE = [
+const PERCENT_PRACTICE: { q: string; options: string[]; correct: number; explanation: string }[] = [
   {
-    q: "Find $\\int x\\cos(x)\\,dx$ using integration by parts.",
-    steps: [
-      "By LIATE, $x$ is Algebraic and $\\cos(x)$ is Trig — set $u = x$.",
-      "Then $dv = \\cos(x)\\,dx$, giving $du = dx$ and $v = \\sin(x)$.",
-      "Apply IBP: $\\int x\\cos(x)\\,dx = x\\sin(x) - \\int\\sin(x)\\,dx$.",
-      "Evaluate: $-\\int\\sin(x)\\,dx = \\cos(x)$.",
-      "Final answer: $x\\sin(x) + \\cos(x) + C$.",
-    ],
+    q: "Solve x² − x − 6 = 0",
+    options: ["x = 2 or −3", "x = −2 or 3", "x = 1 or −6", "x = 3 or 6"],
+    correct: 1,
+    explanation: "Factor as (x − 3)(x + 2) = 0, giving x = 3 or x = −2.",
   },
   {
-    q: "Evaluate $\\int x^2 e^x\\,dx$. You may need IBP twice.",
-    steps: [
-      "First pass: $u = x^2$, $dv = e^x\\,dx$ $\\Rightarrow$ $du = 2x\\,dx$, $v = e^x$.",
-      "After first IBP: $x^2 e^x - 2\\int x\\,e^x\\,dx$.",
-      "Second pass on $\\int x\\,e^x\\,dx$: result is $x e^x - e^x$.",
-      "Substitute back: $x^2 e^x - 2(x e^x - e^x)$.",
-      "Final answer: $e^x(x^2 - 2x + 2) + C$.",
-    ],
+    q: "Solve 3x² + 5x − 2 = 0",
+    options: ["x = 1/3 or −2", "x = −1/3 or 2", "x = 2 or −3", "x = 1 or −2"],
+    correct: 0,
+    explanation: "Factor as (3x − 1)(x + 2) = 0, giving x = 1/3 or x = −2.",
   },
   {
-    q: "Calculate $\\int \\ln(x)\\,dx$. Let $u = \\ln(x)$ and $dv = dx$.",
-    steps: [
-      "Set $u = \\ln(x)$, $dv = dx$, so $du = \\tfrac{1}{x}\\,dx$ and $v = x$.",
-      "Apply IBP: $\\int\\ln(x)\\,dx = x\\ln(x) - \\int x \\cdot \\tfrac{1}{x}\\,dx$.",
-      "Simplify: $\\int 1\\,dx = x$.",
-      "Final answer: $x\\ln(x) - x + C$.",
-    ],
+    q: "Solve x² − 9 = 0",
+    options: ["x = 3", "x = ±9", "x = ±3", "x = 9 or 0"],
+    correct: 2,
+    explanation: "Difference of squares: (x − 3)(x + 3) = 0, so x = ±3.",
   },
 ];
 
-type DemoTab = "steps" | "concept" | "practice";
+type DemoTab = "steps" | "practice";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif"];
 
 const ScreenshotCard = ({ dimmed = false }: { dimmed?: boolean }) => (
   <div className={`w-52 rounded-xl bg-blue-50 p-3.5 shadow-xl border border-blue-100 ${dimmed ? "opacity-40" : ""}`}>
-    <p className="mb-2 text-[10px] font-bold text-gray-500 uppercase tracking-wide">Question 7</p>
-    <div className="mb-2 h-2 w-3/5 rounded bg-gray-400" />
-    <div className="space-y-1.5">
-      <div className="h-1.5 w-full rounded bg-gray-300" />
-      <div className="mt-2 flex items-center justify-center rounded bg-gray-100 py-2">
-        <svg viewBox="0 0 170 115" className="w-32 h-20">
-          <polygon points="25,98 125,98 125,28" fill="none" stroke="#374151" strokeWidth="1.5" />
-          <rect x="114" y="87" width="11" height="11" fill="none" stroke="#374151" strokeWidth="1.2" />
-          <path d="M 43,98 A 18,18 0 0,0 39.7,87.7" fill="none" stroke="#2563eb" strokeWidth="1.3" />
-          <text x="50" y="91" fontSize="9" fill="#2563eb" fontWeight="600">35°</text>
-          <text x="75" y="52" fontSize="9" fill="#6b7280" textAnchor="middle" transform="rotate(-35,75,52)">hyp = 10 cm</text>
-          <text x="133" y="66" fontSize="9" fill="#16a34a" fontWeight="600">x = ?</text>
-        </svg>
-      </div>
-      <div className="h-1.5 w-3/4 rounded bg-gray-300" />
+    <p className="mb-3 text-[10px] font-bold text-gray-500 uppercase tracking-wide">Algebra — Question 4</p>
+    <div className="space-y-2.5">
+      <div className="h-1.5 w-4/5 rounded" style={{ background: "#d1d5db" }} />
+      <div className="h-1.5 w-2/3 rounded" style={{ background: "#e5e7eb" }} />
+      <div className="h-1.5 w-5/6 rounded" style={{ background: "#d1d5db" }} />
     </div>
   </div>
 );
@@ -1371,10 +1307,42 @@ const LOADING_MSGS = [
 const DemoPanel = () => {
   const [phase, setPhase] = useState(0);
   const [tab, setTab] = useState<DemoTab>("steps");
-  const [revealedSteps, setRevealedSteps] = useState(1);
-  const [revealedAnswers, setRevealedAnswers] = useState<Set<number>>(new Set());
+  const [stepIdx, setStepIdx] = useState(0);
+  const [stepViewMode, setStepViewMode] = useState<"deck" | "reveal">("deck");
+  const [revealedCount, setRevealedCount] = useState(1);
+  const stepAnimDir = useRef<1 | -1>(1);
+  const [blueOpenStep, setBlueOpenStep] = useState<number | null>(null);
+  const [blueQuestion, setBlueQuestion] = useState("");
+  const [blueReplied, setBlueReplied] = useState(false);
+  const [blueTyping, setBlueTyping] = useState(true);
+  const [bluePos, setBluePos] = useState({ x: 0, y: 0 });
+  const blueDrag = useRef<{ dragging: boolean; startX: number; startY: number; origX: number; origY: number }>({
+    dragging: false, startX: 0, startY: 0, origX: 0, origY: 0,
+  });
+  const onBlueDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    blueDrag.current = { dragging: true, startX: e.clientX, startY: e.clientY, origX: bluePos.x, origY: bluePos.y };
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+  const onBlueDragMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!blueDrag.current.dragging) return;
+    setBluePos({
+      x: blueDrag.current.origX + (e.clientX - blueDrag.current.startX),
+      y: blueDrag.current.origY + (e.clientY - blueDrag.current.startY),
+    });
+  };
+  const onBlueDragEnd = () => { blueDrag.current.dragging = false; };
+  const [practiceAnswers, setPracticeAnswers] = useState<Record<number, number>>({});
   const [loadingMsgIdx, setLoadingMsgIdx] = useState(0);
   const lastInteractionRef = useRef<number>(Date.now());
+  const isHoveredRef = useRef(false);
+
+  useEffect(() => {
+    if (blueOpenStep === null) return;
+    setBlueTyping(true);
+    setBluePos({ x: 0, y: 0 });
+    const t = setTimeout(() => setBlueTyping(false), 1100);
+    return () => clearTimeout(t);
+  }, [blueOpenStep]);
 
   useEffect(() => {
     if (phase === 0) {
@@ -1391,24 +1359,34 @@ const DemoPanel = () => {
       const t = setTimeout(() => { clearInterval(cycle); setPhase(3); }, 1900);
       return () => { clearTimeout(t); clearInterval(cycle); };
     }
-    const t = setInterval(() => {
-      if (Date.now() - lastInteractionRef.current > 30000) {
-        setPhase(0);
-        setTab("steps");
-        setRevealedSteps(1);
-        setRevealedAnswers(new Set());
+    // Auto-reset after 13 s if user hasn't interacted, otherwise 33 s
+    const check = setInterval(() => {
+      const idle = Date.now() - lastInteractionRef.current;
+      if (!isHoveredRef.current && idle > 33000) {
+        setPhase(0); setTab("steps"); setStepIdx(0); setStepViewMode("deck"); setRevealedCount(1); setBlueOpenStep(null); setBlueQuestion(""); setBlueReplied(false); setBlueTyping(true); setBluePos({ x: 0, y: 0 }); setPracticeAnswers({});
       }
     }, 5000);
-    return () => clearInterval(t);
+    const autoReset = setTimeout(() => {
+      if (!isHoveredRef.current && Date.now() - lastInteractionRef.current > 5000) {
+        setPhase(0); setTab("steps"); setStepIdx(0); setStepViewMode("deck"); setRevealedCount(1); setBlueOpenStep(null); setBlueQuestion(""); setBlueReplied(false); setBlueTyping(true); setBluePos({ x: 0, y: 0 }); setPracticeAnswers({});
+      }
+    }, 18000);
+    return () => { clearInterval(check); clearTimeout(autoReset); };
   }, [phase]);
 
   return (
-    <div className="relative h-[440px] overflow-hidden rounded-2xl border border-primary/30 bg-card shadow-[0_0_40px_hsl(225,75%,55%,0.18),0_0_80px_hsl(225,75%,55%,0.08)] scale-[0.93] origin-top">
-      <div className="relative h-full">
+    <div
+      className="relative h-[440px] scale-[0.93] origin-top"
+      onMouseEnter={() => { isHoveredRef.current = true; lastInteractionRef.current = Date.now(); }}
+      onMouseLeave={() => { isHoveredRef.current = false; lastInteractionRef.current = Date.now(); }}
+      onMouseMove={() => { lastInteractionRef.current = Date.now(); }}
+    >
+      <div className="absolute inset-0 overflow-y-auto rounded-2xl border border-primary/30 bg-card shadow-[0_0_40px_hsl(225,75%,55%,0.18),0_0_80px_hsl(225,75%,55%,0.08)]">
+      <div className="relative min-h-full">
 
         {/* Phase 0: empty state */}
         {phase === 0 && (
-          <div className="flex h-full items-center justify-center select-none">
+          <div className="flex h-[440px] items-center justify-center select-none">
             <div className="flex flex-col items-center gap-3">
               <p className="text-2xl font-extrabold tracking-tight text-foreground">Drop a screenshot</p>
               <p className="text-sm text-muted-foreground">of any problem</p>
@@ -1423,7 +1401,7 @@ const DemoPanel = () => {
 
         {/* Phase 1: screenshot drops into center */}
         {phase === 1 && (
-          <div className="flex h-full items-center justify-center">
+          <div className="flex h-[440px] items-center justify-center">
             <div className="animate-slide-in-paper">
               <ScreenshotCard />
             </div>
@@ -1432,10 +1410,10 @@ const DemoPanel = () => {
 
         {/* Phase 2: loading */}
         {phase === 2 && (
-          <div className="flex h-full flex-col items-center justify-center gap-5 p-8">
+          <div className="flex h-[440px] flex-col items-center justify-center gap-5 p-8">
             <ScreenshotCard dimmed />
-            <div className="w-56">
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+            <div className="w-48">
+              <div className="h-1 w-full overflow-hidden rounded-full bg-secondary">
                 <div className="h-full rounded-full bg-primary animate-loading-fill" />
               </div>
             </div>
@@ -1444,11 +1422,11 @@ const DemoPanel = () => {
 
         {/* Phase 3: results */}
         {phase === 3 && (
-          <div className="animate-fade-up flex h-full flex-col p-4">
+          <div className="animate-fade-up flex min-h-full flex-col p-4">
+            {/* 2-tab bar */}
             {(() => {
               const demoTabs: { value: DemoTab; label: string }[] = [
                 { value: "steps", label: "Step by Step" },
-                { value: "concept", label: "Concept" },
                 { value: "practice", label: "Practice" },
               ];
               const demoTabIdx = demoTabs.findIndex((t) => t.value === tab);
@@ -1456,17 +1434,17 @@ const DemoPanel = () => {
                 <div className="relative mb-3 flex gap-1 rounded-lg border border-border bg-secondary p-1">
                   <div
                     className="absolute bottom-1 top-1 rounded-md bg-card shadow-sm transition-transform duration-200 ease-out"
-                    style={{ width: "calc((100% - 8px) / 3)", transform: `translateX(calc(${demoTabIdx} * 100%))` }}
+                    style={{ width: "calc((100% - 8px) / 2)", transform: `translateX(calc(${demoTabIdx} * 100%))` }}
                   />
                   {demoTabs.map(({ value, label }) => (
                     <button
                       key={value}
                       onClick={() => { setTab(value); lastInteractionRef.current = Date.now(); }}
-                      className={`relative z-10 flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-xs font-semibold transition-colors duration-200 ${
+                      className={`relative z-10 flex flex-1 items-center justify-center rounded-md py-1.5 text-sm font-semibold transition-colors duration-200 ${
                         tab === value ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      <span className="truncate">{label}</span>
+                      {label}
                     </button>
                   ))}
                 </div>
@@ -1474,94 +1452,177 @@ const DemoPanel = () => {
             })()}
 
             {tab === "steps" && (
-              <div className="flex-1 space-y-2 overflow-y-auto pr-0.5">
-                <div className="flex justify-center rounded-lg border border-border bg-secondary/30 py-2">
-                  <svg viewBox="0 0 170 115" className="w-44 h-28">
-                    <polygon points="25,98 125,98 125,28" fill="none" stroke="hsl(var(--foreground) / 0.5)" strokeWidth="1.5" />
-                    <rect x="114" y="87" width="11" height="11" fill="none" stroke="hsl(var(--foreground) / 0.4)" strokeWidth="1.2" />
-                    <path d="M 43,98 A 18,18 0 0,0 39.7,87.7" fill="none" stroke="#5b7fef" strokeWidth="1.3" />
-                    <text x="50" y="91" fontSize="10" fill="#5b7fef" fontWeight="600">35°</text>
-                    <text x="75" y="52" fontSize="10" fill="hsl(var(--foreground) / 0.55)" textAnchor="middle" transform="rotate(-35,75,52)">hyp = 10 cm</text>
-                    <text x="133" y="66" fontSize="10" fill="#4ade80" fontWeight="600">x = ?</text>
-                    <text x="75" y="111" fontSize="10" fill="hsl(var(--foreground) / 0.3)" textAnchor="middle">adj</text>
-                  </svg>
-                </div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary"><RichText text="Find the opposite side" /></div>
-                {PHYSICS_STEPS.slice(0, revealedSteps).map((step, i) => (
-                  <div key={i} className="flex items-start gap-2.5 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">{i + 1}</span>
-                    <div className="text-sm leading-relaxed text-foreground"><RichText text={step} /></div>
-                  </div>
-                ))}
-                {revealedSteps < PHYSICS_STEPS.length && (
+              <div className="flex flex-1 flex-col overflow-hidden">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="text-base font-black text-primary">Solve 2x² − 5x − 3 = 0</p>
                   <button
-                    onClick={() => { setRevealedSteps((v) => v + 1); lastInteractionRef.current = Date.now(); }}
-                    className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                    onClick={() => {
+                      setStepViewMode((v) => {
+                        const next = v === "deck" ? "reveal" : "deck";
+                        if (next === "reveal") setRevealedCount(1);
+                        return next;
+                      });
+                      lastInteractionRef.current = Date.now();
+                    }}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
                   >
-                    Next step <ChevronRight className="h-3 w-3" />
+                    {stepViewMode === "deck" ? (
+                      <><ChevronRight className="h-3.5 w-3.5" /> Reveal steps</>
+                    ) : (
+                      <><ScanLine className="h-3.5 w-3.5" /> One by one</>
+                    )}
                   </button>
-                )}
-                {revealedSteps >= PHYSICS_STEPS.length && (
-                  <p className="pt-1 text-center text-xs text-muted-foreground/50">All steps revealed.</p>
-                )}
-              </div>
-            )}
+                </div>
 
-            {tab === "concept" && (
-              <div className="flex-1 space-y-2 overflow-y-auto">
-                <div className="rounded-lg border border-border bg-secondary/40 p-3">
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <Zap className="h-3.5 w-3.5 text-primary" />
-                    <p className="text-xs font-semibold uppercase tracking-widest text-primary">Explain like I'm 5</p>
+                {stepViewMode === "reveal" ? (
+                  <div className="flex-1 space-y-2.5 overflow-y-auto pr-0.5 animate-in fade-in duration-200">
+                    {PERCENT_STEPS.slice(0, revealedCount).map(({ step }, i) => (
+                      <div key={i} className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">{i + 1}</span>
+                        <div className="text-sm leading-relaxed text-foreground"><RichText text={step} /></div>
+                      </div>
+                    ))}
+                    {revealedCount < PERCENT_STEPS.length ? (
+                      <button
+                        onClick={() => { setRevealedCount((v) => v + 1); lastInteractionRef.current = Date.now(); }}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                      >
+                        Show next step <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <p className="pt-1 text-center text-[10px] text-muted-foreground/50">All steps revealed.</p>
+                    )}
                   </div>
-                  <div className="text-sm leading-relaxed text-foreground"><RichText text={PHYSICS_ELI5} /></div>
-                </div>
-                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <Lightbulb className="h-3.5 w-3.5 text-primary" />
-                    <p className="text-xs font-semibold uppercase tracking-widest text-primary">The concept</p>
+                ) : (
+                  <div className="flex flex-1 flex-col">
+                    <div className="flex-1 overflow-hidden rounded-2xl border border-primary/25 bg-card p-4 shadow-[0_0_24px_hsl(var(--primary)/0.08)]">
+                      <div
+                        key={stepIdx}
+                        className={cn(
+                          "h-full overflow-y-auto animate-in fade-in duration-200 fill-mode-both",
+                          stepAnimDir.current === 1 ? "slide-in-from-right-4" : "slide-in-from-left-4"
+                        )}
+                      >
+                      <div className="mb-3 flex items-center gap-2.5">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-base font-black text-primary-foreground shadow-[0_0_16px_hsl(var(--primary)/0.4)]">
+                          {stepIdx + 1}
+                        </span>
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                          Step {stepIdx + 1} of {PERCENT_STEPS.length}
+                        </p>
+                      </div>
+                      <div className="text-sm leading-relaxed text-foreground">
+                        <RichText text={PERCENT_STEPS[stepIdx].step} />
+                      </div>
+                      </div>
+                    </div>
+
+                    {/* Ask Blue — stays at fixed position below step card */}
+                    <button
+                      onClick={() => {
+                        setBlueOpenStep((cur) => {
+                          const next = cur === stepIdx ? null : stepIdx;
+                          if (next !== null) { setBlueQuestion(""); setBlueReplied(false); }
+                          return next;
+                        });
+                        lastInteractionRef.current = Date.now();
+                      }}
+                      className="mt-2 flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    >
+                      <img src="/blue.png" alt="" draggable={false} className="h-4 w-4 rounded-full object-cover shrink-0" />
+                      Ask Blue about this step
+                    </button>
+
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <button
+                        disabled={stepIdx === 0}
+                        onClick={() => {
+                          stepAnimDir.current = -1;
+                          setStepIdx((i) => Math.max(0, i - 1));
+                          lastInteractionRef.current = Date.now();
+                        }}
+                        className="flex items-center gap-1 rounded-xl border border-border px-3 py-2 text-xs font-bold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-30 disabled:pointer-events-none"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" /> Back
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {PERCENT_STEPS.map((_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              stepAnimDir.current = i > stepIdx ? 1 : -1;
+                              setStepIdx(i);
+                              lastInteractionRef.current = Date.now();
+                            }}
+                            aria-label={`Go to step ${i + 1}`}
+                            className={`h-1.5 rounded-full transition-all duration-200 ${i === stepIdx ? "w-5 bg-primary" : "w-1.5 bg-border hover:bg-primary/40"}`}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        disabled={stepIdx === PERCENT_STEPS.length - 1}
+                        onClick={() => {
+                          stepAnimDir.current = 1;
+                          setStepIdx((i) => Math.min(PERCENT_STEPS.length - 1, i + 1));
+                          lastInteractionRef.current = Date.now();
+                        }}
+                        className="flex items-center gap-1 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-30 disabled:pointer-events-none"
+                      >
+                        Next <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    {stepIdx === PERCENT_STEPS.length - 1 && (
+                      <button
+                        onClick={() => { setTab("practice"); lastInteractionRef.current = Date.now(); }}
+                        className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90 animate-in fade-in duration-300"
+                      >
+                        Practice this step <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
-                  <div className="text-sm leading-relaxed text-foreground"><RichText text={PHYSICS_CORE_CONCEPT} /></div>
-                </div>
-                <div className="rounded-lg border border-border bg-secondary/60 p-3">
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <ArrowRight className="h-3.5 w-3.5 text-primary" />
-                    <p className="text-xs font-semibold uppercase tracking-widest text-primary">When you see this</p>
-                  </div>
-                  <div className="text-sm leading-relaxed text-foreground"><RichText text={PHYSICS_RECOGNITION_CUE} /></div>
-                </div>
+                )}
               </div>
             )}
 
             {tab === "practice" && (
-              <div className="flex-1 space-y-2 overflow-y-auto">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-primary">Practice Questions</p>
-                {PHYSICS_PRACTICE.map((item, i) => (
-                  <div key={i} className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2">
-                        <span className="mt-0.5 shrink-0 text-sm font-bold text-primary">{i + 1}.</span>
-                        <div className="text-sm leading-relaxed text-foreground"><RichText text={item.q} /></div>
+              <div className="flex-1 space-y-3 overflow-y-auto">
+                {PERCENT_PRACTICE.map((item, i) => {
+                  const chosen = practiceAnswers[i];
+                  const answered = chosen !== undefined;
+                  return (
+                    <div key={i} className="rounded-xl border border-border bg-card p-3.5">
+                      <p className="mb-3 text-base font-semibold text-foreground">{item.q}</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {item.options.map((opt, j) => {
+                          const isCorrect = j === item.correct;
+                          const isChosen = chosen === j;
+                          return (
+                            <button
+                              key={j}
+                              disabled={answered}
+                              onClick={() => { setPracticeAnswers((p) => ({ ...p, [i]: j })); lastInteractionRef.current = Date.now(); }}
+                              className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-all ${
+                                !answered
+                                  ? "border-border text-foreground hover:border-primary/50 hover:bg-primary/5"
+                                  : isCorrect
+                                  ? "border-green-500/50 bg-green-500/10 text-green-400"
+                                  : isChosen
+                                  ? "border-destructive/50 bg-destructive/10 text-destructive"
+                                  : "border-border text-muted-foreground opacity-50"
+                              }`}
+                            >
+                              {opt}
+                            </button>
+                          );
+                        })}
                       </div>
-                      <button
-                        onClick={() => { lastInteractionRef.current = Date.now(); setRevealedAnswers((prev) => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; }); }}
-                        className="shrink-0 text-xs font-semibold text-primary underline underline-offset-2 hover:text-primary/80"
-                      >
-                        {revealedAnswers.has(i) ? "Hide" : "Answer"}
-                      </button>
+                      {answered && (
+                        <p className="mt-2.5 text-xs text-muted-foreground">{item.explanation}</p>
+                      )}
                     </div>
-                    {revealedAnswers.has(i) && (
-                      <div className="mt-2 space-y-1">
-                        {item.steps.map((step, si) => (
-                          <div key={si} className="flex items-start gap-2 rounded border border-primary/20 bg-card px-2.5 py-1.5">
-                            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">{si + 1}</span>
-                            <div className="text-xs leading-relaxed text-foreground"><RichText text={step} /></div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -1569,6 +1630,78 @@ const DemoPanel = () => {
         )}
 
       </div>
+      </div>
+      {blueOpenStep !== null && (
+        <div
+          className="absolute z-10 bottom-4 right-4 w-64 select-none overflow-hidden rounded-2xl border border-primary/25 bg-card shadow-2xl animate-in fade-in duration-150"
+          style={{ transform: `translate(${bluePos.x}px, ${bluePos.y}px)`, transition: 'none' }}
+        >
+          <div
+            onPointerDown={onBlueDragStart}
+            onPointerMove={onBlueDragMove}
+            onPointerUp={onBlueDragEnd}
+            onPointerCancel={onBlueDragEnd}
+            className="flex items-center gap-2.5 border-b border-border bg-secondary/40 px-3.5 py-2.5 cursor-grab touch-none active:cursor-grabbing"
+          >
+            <img src="/blue.png" alt="" draggable={false} className="h-7 w-7 rounded-full object-cover shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-black uppercase tracking-widest text-primary">Blue</p>
+              <p className="truncate text-[10px] text-muted-foreground">drag to move</p>
+            </div>
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => { setBlueOpenStep(null); lastInteractionRef.current = Date.now(); }}
+              className="shrink-0 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="space-y-2.5 p-3.5">
+            {blueTyping ? (
+              <div className="flex w-fit items-center gap-1.5 rounded-xl rounded-tl-sm border border-border bg-secondary/40 px-3.5 py-2.5">
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.3s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.15s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50" />
+              </div>
+            ) : (
+              <div className="rounded-xl rounded-tl-sm border border-border bg-secondary/40 px-3.5 py-2.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                <p className="text-xs leading-relaxed text-foreground/85">I understand your step now. What question do you have?</p>
+              </div>
+            )}
+            {blueReplied && (
+              <div className="rounded-xl rounded-tl-sm border border-primary/30 bg-primary/5 px-3.5 py-2.5 animate-in fade-in duration-300">
+                <p className="text-xs leading-relaxed text-foreground/80">
+                  Great question — this is exactly the kind of back-and-forth you'd get with the real Blue. Sign up free and ask away on any step →
+                </p>
+              </div>
+            )}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!blueQuestion.trim() || blueReplied || blueTyping) return;
+                setBlueReplied(true);
+                lastInteractionRef.current = Date.now();
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                value={blueQuestion}
+                onChange={(e) => { setBlueQuestion(e.target.value); lastInteractionRef.current = Date.now(); }}
+                placeholder="Ask Blue a question…"
+                disabled={blueReplied || blueTyping}
+                className="flex-1 min-w-0 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={!blueQuestion.trim() || blueReplied || blueTyping}
+                className="shrink-0 flex items-center justify-center rounded-lg bg-primary p-2 text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <Send className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1601,21 +1734,12 @@ const FAQ_ITEMS = [
   },
 ];
 
-function GoButton() {
+function GoButton({ to = "/dive", label = "Try without signup" }: { to?: string; label?: ReactNode }) {
   return (
-    <Link to="/workspace">
-      <button className="group relative h-16 min-w-[200px] rounded-2xl bg-primary px-10 text-xl font-bold text-white select-none overflow-hidden transition-all duration-300 shadow-[0_0_24px_4px_rgba(91,127,239,0.3)] hover:scale-[1.03] hover:shadow-[0_0_44px_10px_rgba(91,127,239,0.45)]">
-        {/* Shimmer sweep on hover */}
+    <Link to={to} className="block w-full">
+      <button className="group relative w-full rounded-2xl bg-primary py-4 text-base font-bold text-white select-none overflow-hidden transition-all duration-300 shadow-[0_0_24px_4px_rgba(91,127,239,0.3)] hover:scale-[1.02] hover:shadow-[0_0_44px_10px_rgba(91,127,239,0.45)] active:scale-[0.98]">
         <span className="pointer-events-none absolute inset-0 translate-x-[-100%] skew-x-[-20deg] bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-500 group-hover:translate-x-[150%]" />
-        <span className="relative z-10 flex items-end gap-0 justify-center leading-none tracking-tight">
-          <span>Go</span>
-          <span className="flex items-end mb-0.5 ml-0.5">
-            {[0, 1, 2].map((i) => (
-              <span key={i} className="inline-block animate-bounce text-white/80"
-                style={{ animationDelay: `${i * 160}ms`, animationDuration: "900ms" }}>.</span>
-            ))}
-          </span>
-        </span>
+        <span className="relative z-10">{label}</span>
       </button>
     </Link>
   );
@@ -1665,6 +1789,16 @@ const Landing = () => {
   const [deeperY, setDeeperY] = useState(0);
   const highlightFired = useRef(false);
 
+  const [landingUser, setLandingUser] = useState<User | null | undefined>(undefined);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => setLandingUser(session?.user ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange((_e, session) => {
+      setLandingUser(session?.user ?? null);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+  const isSignedIn = !!landingUser;
+
   const runHighlight = useCallback(() => {
     if (highlightFired.current) return;
     highlightFired.current = true;
@@ -1674,7 +1808,9 @@ const Landing = () => {
   }, []);
 
   useEffect(() => {
-    const onScroll = () => setChevronVisible(window.scrollY < 80);
+    const onScroll = () => {
+      setChevronVisible(window.scrollY < 80);
+    };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
@@ -1765,17 +1901,68 @@ const Landing = () => {
                   ))}
                 </div>
                 <h1 className="relative text-4xl font-extrabold tracking-tight text-foreground sm:text-5xl md:text-6xl lg:text-7xl xl:text-[5.25rem]">
-                  Go <span style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontOpticalSizing: "auto", paddingRight: "0.08em", backgroundImage: "linear-gradient(to bottom, hsl(225 90% 70%), hsl(225 75% 50%) 70%, hsl(225 60% 25%))", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", display: "inline-block", transform: `translateY(${deeperY}px)`, transition: "transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)" } as React.CSSProperties}>deeper</span>
+                  Go{" "}<span style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontOpticalSizing: "auto", paddingRight: "0.18em", backgroundImage: "linear-gradient(to bottom, hsl(225 90% 70%), hsl(225 75% 50%) 70%, hsl(225 60% 25%))", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", display: "inline-block", transform: `translateY(${deeperY}px)`, transition: "transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)" } as React.CSSProperties}>deeper</span>
                 </h1>
                 <h1 className="relative text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl md:text-4xl lg:text-5xl xl:text-[3.75rem]">
                   than the answer.
                 </h1>
                 <p className="mt-6 max-w-md text-base sm:text-lg md:text-xl leading-relaxed text-muted-foreground">
-                  Screenshot a problem. Turn it into a complete learning loop: step-by-step solution, concept deep-dive, and gap-targeted practice.
+                  Master any STEM concept using simplified, screenshot-based deep learning designed for students who struggle with focus.
                 </p>
-                <div className="mt-10">
-                  <GoButton />
-                </div>
+                {isSignedIn ? (
+                  <div className="mt-8 flex justify-center sm:justify-start">
+                    <Link to="/dive" className="block">
+                      <button className="group relative rounded-3xl bg-primary px-12 py-6 text-xl font-bold text-white select-none overflow-hidden transition-all duration-300 shadow-[0_0_24px_4px_rgba(91,127,239,0.3)] hover:scale-[1.02] hover:shadow-[0_0_44px_10px_rgba(91,127,239,0.45)] active:scale-[0.98]">
+                        <span className="pointer-events-none absolute inset-0 translate-x-[-100%] skew-x-[-20deg] bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-500 group-hover:translate-x-[150%]" />
+                        <span className="relative z-10 inline-flex items-center gap-2">
+                          Go
+                          <span className="inline-flex items-center gap-1">
+                            <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.3s]" />
+                            <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.15s]" />
+                            <span className="h-2 w-2 animate-bounce rounded-full bg-white/80" />
+                          </span>
+                        </span>
+                      </button>
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="mt-8 flex flex-col gap-3 w-full max-w-sm">
+                    <GoButton />
+                    {/* Divider */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-border" />
+                      <span className="text-xs text-muted-foreground">or sign up with</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <div className="flex gap-3">
+                      {/* Google sign-up */}
+                      <button
+                        onClick={() => supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: `${window.location.origin}/dashboard` } })}
+                        className="group flex flex-1 items-center justify-center gap-2.5 rounded-2xl border border-border bg-card/60 py-4 font-semibold text-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md active:scale-[0.98]"
+                        title="Sign up with Google"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                        </svg>
+                        <span className="text-[13px]">Google</span>
+                      </button>
+
+                      {/* Email sign-up */}
+                      <Link
+                        to="/signup"
+                        state={{ openEmail: true }}
+                        className="group flex flex-1 items-center justify-center gap-2.5 rounded-2xl border border-border bg-card/60 py-4 font-semibold text-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md active:scale-[0.98]"
+                        title="Sign up with email"
+                      >
+                        <Mail className="h-5 w-5 text-foreground/70 group-hover:text-foreground transition-colors" />
+                        <span className="text-[13px]">Email</span>
+                      </Link>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Right — live demo (hidden on mobile) */}

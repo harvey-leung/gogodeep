@@ -23,13 +23,14 @@ import NotFound from "./pages/NotFound";
 import ResetPassword from "./pages/ResetPassword";
 import Interact from "./pages/Interact";
 import Settings from "./pages/Settings";
+import Stream from "./pages/Stream";
 
 const queryClient = new QueryClient();
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif"];
 
 // Routes that use the sidebar layout (authenticated app shell)
-const SIDEBAR_ROUTES = ["/dashboard", "/workspace", "/report", "/settings", "/contact"];
+const SIDEBAR_ROUTES = ["/dashboard", "/dive", "/report", "/settings", "/contact", "/stream"];
 
 function GlobalDropZone() {
   const navigate = useNavigate();
@@ -38,18 +39,19 @@ function GlobalDropZone() {
   const dragCounterRef = useRef(0);
 
   useEffect(() => {
-    const onEnter = (e: DragEvent) => { e.preventDefault(); dragCounterRef.current++; setDragging(true); };
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+    const onEnter = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dragCounterRef.current++; setDragging(true); };
     const onLeave = () => { dragCounterRef.current--; if (dragCounterRef.current === 0) setDragging(false); };
-    const onOver = (e: DragEvent) => e.preventDefault();
+    const onOver = (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); };
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       dragCounterRef.current = 0;
       setDragging(false);
-      if (location.pathname === "/workspace") return;
+      if (location.pathname === "/dive") return;
       const file = e.dataTransfer?.files[0];
       if (!file || !ALLOWED_IMAGE_TYPES.includes(file.type)) return;
       pendingFileStore.set(file);
-      navigate("/workspace");
+      navigate("/dive");
     };
     document.addEventListener("dragenter", onEnter);
     document.addEventListener("dragleave", onLeave);
@@ -63,7 +65,7 @@ function GlobalDropZone() {
     };
   }, [navigate]);
 
-  if (!dragging || location.pathname === "/workspace") return null;
+  if (!dragging || location.pathname === "/dive") return null;
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-background/90 backdrop-blur-sm pointer-events-none">
       <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-primary bg-card/80 px-16 py-12 text-center shadow-2xl">
@@ -87,7 +89,7 @@ function AnimatedRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route
-          path="/workspace"
+          path="/dive"
           element={
             <ErrorBoundary>
               <DiagnosticLab />
@@ -102,6 +104,7 @@ function AnimatedRoutes() {
             </ErrorBoundary>
           }
         />
+        <Route path="/stream" element={<Stream />} />
         <Route path="/interact" element={<Interact />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/contact" element={<Contact />} />
@@ -162,7 +165,7 @@ function AppLayout() {
       ) : showNav ? (
         <AppNav user={user ?? null} />
       ) : null}
-      <div className={showSidebar ? (sidebarCollapsed ? "md:ml-14 transition-[margin] duration-200" : "md:ml-64 transition-[margin] duration-200") : ""}>
+      <div className={showSidebar ? (sidebarCollapsed ? "pb-20 md:pb-0 md:ml-14 transition-[margin] duration-200" : "pb-20 md:pb-0 md:ml-64 transition-[margin] duration-200") : ""}>
         <AnimatedRoutes />
       </div>
       <WhaleAssistant />

@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
 import { useLocation, Link, useNavigate } from "react-router-dom";
 import {
   BookOpen, ArrowLeft, TriangleAlert, Lightbulb, ClipboardList,
-  ChevronRight, ArrowRight, FileSearch, Lock, Loader2, Waves, CheckCircle2, Layers, X, Send, ChevronsRight, ChevronLeft, Smile,
+  ChevronRight, ArrowRight, FileSearch, Lock, Loader2, Waves, CheckCircle2, Layers, X, Send, ChevronsRight, ChevronLeft, Smile, Trash2, Flame, ScanLine, List,
 } from "lucide-react";
 import { UnitCircle, LawOfSinesCosines, TrigIdentities, PythagoreanTheorem, QuadraticEquations, TheDerivative, DefiniteIntegrals, LimitsAndContinuity, TaylorSeries, DifferentialEquations, LinearRegression, BinomialDistribution, Vectors2D, ComplexNumbers, Logarithms, ConicSections, MatrixTransformations, SequencesSeries, Optimization, SimilarTriangles, Inequalities } from "@/components/interact/MathModels2";
 import { NormalDistribution } from "@/components/interact/MathCSModels";
@@ -14,6 +14,10 @@ import { KeplerLaws, StellarLifecycle, GreenhouseEffect, AtmosphereLayers } from
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import EducatorLayout from "@/components/EducatorLayout";
 import { RichText } from "@/components/RichText";
 import { supabase } from "@/integrations/supabase/client";
@@ -102,7 +106,7 @@ type NavState = {
   guest?: boolean;
 };
 
-type ReportTab = "steps" | "error" | "concept" | "practice" | "model";
+type ReportTab = "steps" | "error" | "practice";
 
 // ── Model matching ────────────────────────────────────────────────────────────
 
@@ -261,11 +265,17 @@ function PracticeTab({ problems, plan, onGenerateMore, isGeneratingMore, isLoadi
 
   if (isLoadingPractice) {
     return (
-      <div className="flex items-center justify-center py-10">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">Generating practice questions…</p>
-        </div>
+      <div className="space-y-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="rounded-lg border border-border bg-secondary/40 p-4 animate-pulse">
+            <div className="mb-4 h-4 rounded bg-secondary w-4/5" />
+            <div className="space-y-2">
+              {[0, 1, 2, 3].map((j) => (
+                <div key={j} className="h-9 rounded-lg border border-border bg-secondary/60" />
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -517,7 +527,7 @@ function IdentifyErrorTab({ diagnosis }: { diagnosis: IdentifyDiagnosis }) {
           <CheckCircle2 className="h-4 w-4 text-green-500" />
           <p className="text-xs font-semibold uppercase tracking-[0.15em] text-green-500">All correct</p>
         </div>
-        <p className="text-sm leading-relaxed text-foreground">Your working is correct. Check the Concept and Practice tabs to strengthen your understanding.</p>
+        <p className="text-sm leading-relaxed text-foreground">Your working is correct. Check the Practice tab to strengthen your understanding.</p>
       </div>
     );
   }
@@ -799,7 +809,7 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
               <button
                 key={s}
                 onClick={() => send(s)}
-                className="w-fit rounded-xl border border-border bg-secondary/50 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-secondary hover:text-foreground"
+                className="w-fit rounded-xl border border-border bg-secondary/70 px-3 py-2 text-left text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-secondary hover:text-primary"
               >
                 {s}
               </button>
@@ -1000,6 +1010,571 @@ function StepsTab({ diagnosis, steps, revealed, setRevealed, plan, isLoading, im
   );
 }
 
+// ── Deck Report ───────────────────────────────────────────────────────────────
+
+type DeckCard =
+  | { type: "intro" }
+  | { type: "step"; idx: number; text: string }
+  | { type: "practice"; problem: PracticeItem; practiceIdx: number }
+  | { type: "win" };
+
+function DeckReport({
+  diagnosis, mode, effectiveSteps, practice, imageSrc, inputText,
+  onAskWhale, userId, scanXP, onImageClick, loadingSteps, loadingPractice, isGuest, onSignup,
+}: {
+  diagnosis: Diagnosis;
+  mode: string;
+  effectiveSteps: string[];
+  practice: PracticeItem[];
+  imageSrc: string | null;
+  inputText: string | null;
+  onAskWhale: (text: string) => void;
+  userId: string | null;
+  scanXP: number;
+  onImageClick: () => void;
+  loadingSteps: boolean;
+  loadingPractice: boolean;
+  isGuest: boolean;
+  onSignup: () => void;
+}) {
+  const navigate = useNavigate();
+  const [cardIndex, setCardIndex] = useState(0);
+  const [stepViewMode, setStepViewMode] = useState<"deck" | "all">("deck");
+  const [practiceStreak, setPracticeStreak] = useState(0);
+  const [sessionXP, setSessionXP] = useState(scanXP);
+  const [practiceAnswers, setPracticeAnswers] = useState<Record<number, number>>({});
+  const [earnedIds, setEarnedIds] = useState<Set<number>>(new Set());
+  const touchStartX = useRef<number | null>(null);
+  const animDir = useRef<1 | -1>(1);
+
+  // Stable shuffled MC options — computed once per practice array
+  const mcStates = useMemo(() => {
+    const result: Record<number, { options: string[]; correctIdx: number }> = {};
+    for (const p of practice) {
+      if (!p.options || p.options.length < 2) continue;
+      const correct = p.options[0];
+      const shuffled = [...p.options].sort(() => Math.random() - 0.5);
+      result[p.id] = { options: shuffled, correctIdx: shuffled.indexOf(correct) };
+    }
+    return result;
+  }, [practice.map(p => p.id).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Build the card sequence
+  const cards = useMemo((): DeckCard[] => {
+    const list: DeckCard[] = [];
+    list.push({ type: "intro" });
+    effectiveSteps.forEach((text, idx) => list.push({ type: "step", idx, text }));
+    practice.forEach((problem, practiceIdx) => list.push({ type: "practice", problem, practiceIdx }));
+    list.push({ type: "win" });
+    return list;
+  }, [effectiveSteps.length, practice.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const card = cards[Math.min(cardIndex, cards.length - 1)];
+  const totalCards = cards.length;
+  const isPracticeCard = card.type === "practice";
+  const currentProblem = isPracticeCard ? (card as Extract<DeckCard, { type: "practice" }>).problem : null;
+  const isAnswered = currentProblem ? practiceAnswers[currentProblem.id] !== undefined : false;
+
+  function goNext() {
+    if (cardIndex < totalCards - 1) { animDir.current = 1; setCardIndex(i => i + 1); }
+  }
+  function goBack() {
+    if (cardIndex > 0) { animDir.current = -1; setCardIndex(i => i - 1); }
+  }
+  function jumpTo(idx: number) {
+    animDir.current = idx > cardIndex ? 1 : -1;
+    setCardIndex(idx);
+  }
+
+  function onTouchStart(e: React.TouchEvent) { touchStartX.current = e.touches[0].clientX; }
+  function onTouchEnd(e: React.TouchEvent) {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    if (dx < -50 && card.type !== "win") goNext();
+    else if (dx > 50 && cardIndex > 0) goBack();
+    touchStartX.current = null;
+  }
+
+  function handleAnswer(problemId: number, chosenIdx: number, correctIdx: number) {
+    if (practiceAnswers[problemId] !== undefined) return;
+    setPracticeAnswers(prev => ({ ...prev, [problemId]: chosenIdx }));
+    const isCorrect = chosenIdx === correctIdx;
+    if (isCorrect && !earnedIds.has(problemId)) {
+      const newStreak = practiceStreak + 1;
+      setPracticeStreak(newStreak);
+      const xp = newStreak >= 3 ? 30 : newStreak === 2 ? 22 : PRACTICE_CORRECT_XP;
+      const bonus = newStreak >= 3 ? " 🔥 ×2" : newStreak === 2 ? " 🔥 ×1.5" : "";
+      if (userId) addBonusXP(userId, xp, "practice");
+      setSessionXP(prev => prev + xp);
+      setEarnedIds(prev => new Set([...prev, problemId]));
+      window.dispatchEvent(new CustomEvent("whale-notify", {
+        detail: { message: `+${xp} XP${bonus}`, type: "success" },
+      }));
+    } else if (!isCorrect) {
+      setPracticeStreak(0);
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
+      {/* Segmented progress bar */}
+      <div className="flex gap-1 px-4 pt-3 pb-2 shrink-0">
+        {cards.map((_, i) => (
+          <div key={i} className={cn(
+            "flex-1 h-1 rounded-full transition-all duration-300",
+            i < cardIndex ? "bg-primary" : i === cardIndex ? "bg-primary/60" : "bg-secondary"
+          )} />
+        ))}
+      </div>
+
+      {/* Guest banner */}
+      {isGuest && (
+        <div className="mx-4 mb-1 flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 shrink-0">
+          <p className="text-xs font-semibold text-foreground min-w-0">Save this scan — <span className="text-muted-foreground">create a free account</span></p>
+          <Button size="sm" className="shrink-0 h-7 px-3 text-xs bg-primary hover:bg-primary/90" onClick={onSignup}>
+            Sign up
+          </Button>
+        </div>
+      )}
+
+      {/* Card content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-5">
+          <div
+            key={card.type === "step" ? "step" : cardIndex}
+            className={cn(
+              "animate-in fade-in duration-200 fill-mode-both",
+              animDir.current === 1 ? "slide-in-from-right-4" : "slide-in-from-left-4"
+            )}
+          >
+
+            {/* ── INTRO card ── */}
+            {card.type === "intro" && (
+              <div className="space-y-5">
+                {/* Question image or text */}
+                {imageSrc ? (
+                  <div
+                    className="rounded-xl border border-border bg-secondary/40 p-2 flex items-center justify-center cursor-zoom-in"
+                    onClick={onImageClick}
+                  >
+                    <img src={imageSrc} alt="Your question" className="max-h-52 w-full rounded-lg object-contain" />
+                  </div>
+                ) : inputText ? (
+                  <div className="rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
+                    <p className="whitespace-pre-wrap leading-relaxed">{inputText}</p>
+                  </div>
+                ) : null}
+
+                {/* Error diagnosis (identify mode) */}
+                {mode === "identify" && (diagnosis as IdentifyDiagnosis).error_category !== "Correct" && (
+                  <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-5 space-y-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-destructive/70">Error found</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(diagnosis as IdentifyDiagnosis).error_category && (
+                        <span className={cn("rounded-full px-3 py-1 text-sm font-black", {
+                          "bg-red-500/15 text-red-400": (diagnosis as IdentifyDiagnosis).error_category?.toLowerCase() === "conceptual",
+                          "bg-yellow-500/15 text-yellow-400": (diagnosis as IdentifyDiagnosis).error_category?.toLowerCase() === "procedural",
+                          "bg-orange-500/15 text-orange-400": (diagnosis as IdentifyDiagnosis).error_category?.toLowerCase() === "computational",
+                          "bg-blue-500/15 text-blue-400": (diagnosis as IdentifyDiagnosis).error_category?.toLowerCase() === "notational",
+                        })}>
+                          {(diagnosis as IdentifyDiagnosis).error_category}
+                        </span>
+                      )}
+                      {(diagnosis as IdentifyDiagnosis).error_tag && (
+                        <span className="rounded-full border border-border px-3 py-1 text-sm font-semibold text-muted-foreground">
+                          {(diagnosis as IdentifyDiagnosis).error_tag}
+                        </span>
+                      )}
+                    </div>
+                    {(diagnosis as IdentifyDiagnosis).explanation && (
+                      <p className="text-[15px] leading-relaxed text-foreground">
+                        <RichText text={(diagnosis as IdentifyDiagnosis).explanation} />
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {mode === "identify" && (diagnosis as IdentifyDiagnosis).error_category === "Correct" && (
+                  <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-6 text-center">
+                    <p className="text-3xl font-black text-green-400">Looks correct ✓</p>
+                    <p className="mt-2 text-sm text-muted-foreground">No errors found in your working.</p>
+                  </div>
+                )}
+
+                {/* Guide mode question summary */}
+                {mode === "guide" && (diagnosis as any)?.question_summary && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Question</p>
+                    <p className="text-[15px] leading-relaxed text-foreground">
+                      <RichText text={(diagnosis as any).question_summary} />
+                    </p>
+                  </div>
+                )}
+
+                {/* Core concept callout */}
+                {(diagnosis as any)?.core_concept && (
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-4 space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary/70">Core concept</p>
+                    <p className="text-[15px] leading-relaxed text-foreground">
+                      <RichText text={(diagnosis as any).core_concept} />
+                    </p>
+                  </div>
+                )}
+
+                {/* Loading indicator while steps are being fetched */}
+                {loadingSteps && !effectiveSteps.length && (
+                  <div className="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                    <p className="text-sm text-muted-foreground">Building step-by-step breakdown…</p>
+                  </div>
+                )}
+
+                {/* Session overview — big numbers so it's impossible to miss */}
+                {(effectiveSteps.length > 0 || practice.length > 0) && (
+                  <div className="space-y-3 pt-1">
+                    <div className="flex gap-3">
+                      <div className="flex-1 rounded-2xl border border-border bg-card/60 p-5 text-center">
+                        <p className="text-4xl font-black text-foreground leading-none">
+                          {effectiveSteps.length}
+                        </p>
+                        <p className="mt-2 text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">
+                          Steps
+                        </p>
+                      </div>
+                      <div className="flex-1 rounded-2xl border border-primary/20 bg-primary/5 p-5 text-center">
+                        <p className="text-4xl font-black text-primary leading-none">
+                          {practice.length > 0 ? practice.length : (loadingPractice ? "…" : "–")}
+                        </p>
+                        <p className="mt-2 text-xs font-black uppercase tracking-[0.18em] text-primary/60">
+                          Practice Qs
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Skip straight to practice if questions are already loaded */}
+                    {practice.length > 0 && (
+                      <button
+                        onClick={() => jumpTo(1 + effectiveSteps.length)}
+                        className="w-full rounded-xl border border-border bg-secondary/40 py-3 text-sm font-black text-muted-foreground transition-all hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+                      >
+                        Skip to practice →
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── STEP card ── */}
+            {card.type === "step" && (() => {
+              const { idx, text } = card as Extract<DeckCard, { type: "step" }>;
+              const cleanText = text.replace(/^Step\s+\d+:\s*/i, "").trim();
+              const segments = cleanText.split(/(\$\$[\s\S]*?\$\$)/g);
+              const prevText = idx > 0
+                ? effectiveSteps[idx - 1].replace(/^Step\s+\d+:\s*/i, "").trim()
+                : null;
+              const nextText = idx < effectiveSteps.length - 1
+                ? effectiveSteps[idx + 1].replace(/^Step\s+\d+:\s*/i, "").trim()
+                : null;
+
+              const toggleButton = (
+                <button
+                  onClick={() => setStepViewMode((v) => (v === "all" ? "deck" : "all"))}
+                  title={stepViewMode === "all" ? "One by one" : "Full view"}
+                  aria-label={stepViewMode === "all" ? "Switch to one-by-one view" : "Switch to full view"}
+                  className="flex shrink-0 items-center justify-center rounded-lg border border-border h-8 w-8 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                >
+                  {stepViewMode === "all" ? (
+                    <ScanLine className="h-3.5 w-3.5" />
+                  ) : (
+                    <List className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              );
+
+              // Shared header — identical layout/position in both view modes so
+              // the toggle and question never jump around when switching views.
+              const header = (
+                <>
+                  <div className="flex items-center justify-end">
+                    {toggleButton}
+                  </div>
+                  {(diagnosis as any)?.question_summary && (
+                    <div className="rounded-xl border border-border/40 bg-secondary/30 px-4 py-3">
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-1.5">Question</p>
+                      <p className="text-xs leading-relaxed text-foreground/70 line-clamp-3">
+                        <RichText text={(diagnosis as any).question_summary} />
+                      </p>
+                    </div>
+                  )}
+                </>
+              );
+
+              if (stepViewMode === "all") {
+                return (
+                  <div className="space-y-3">
+                    {header}
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">All steps</p>
+                    <div className="space-y-2.5">
+                      {effectiveSteps.map((stepText, i) => {
+                        const clean = stepText.replace(/^Step\s+\d+:\s*/i, "").trim();
+                        return (
+                          <div
+                            key={i}
+                            className={cn(
+                              "flex items-start gap-3 rounded-xl border p-3.5",
+                              i === idx ? "border-primary/30 bg-primary/5" : "border-border/40 bg-card/40"
+                            )}
+                          >
+                            <span className={cn(
+                              "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black",
+                              i === idx ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                            )}>
+                              {i + 1}
+                            </span>
+                            <div className="text-sm leading-relaxed text-foreground">
+                              <RichText text={clean} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  {header}
+
+                  {/* Previous step — faded peek so user can see where they came from */}
+                  {prevText && (
+                    <div key={`prev-${idx}`} className="pointer-events-none select-none rounded-xl border border-border/30 bg-card/30 px-4 py-3 opacity-35 animate-in fade-in duration-200 fill-mode-both">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground mb-1">
+                        ↑ Step {idx}
+                      </p>
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {prevText.replace(/\$\$?[^$]*\$\$?/g, "…").substring(0, 100)}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Current step — full prominence. Frame stays static; only inner content slides. */}
+                  <div className="rounded-2xl border border-primary/25 bg-card p-5 shadow-[0_0_24px_hsl(var(--primary)/0.08)]">
+                    <div
+                      key={idx}
+                      className={cn(
+                        "animate-in fade-in duration-200 fill-mode-both",
+                        animDir.current === 1 ? "slide-in-from-right-4" : "slide-in-from-left-4"
+                      )}
+                    >
+                      <div className="flex items-center gap-3 mb-5">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-black text-primary-foreground shadow-[0_0_20px_hsl(var(--primary)/0.4)]">
+                          {idx + 1}
+                        </span>
+                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                          Step {idx + 1} of {effectiveSteps.length}
+                        </p>
+                      </div>
+                      <div className="space-y-4">
+                        {segments.map((seg, si) => {
+                          const trimmed = seg.trim();
+                          if (!trimmed) return null;
+                          if (trimmed.startsWith("$$") && trimmed.endsWith("$$")) {
+                            return (
+                              <div key={si} className="rounded-xl border border-primary/25 bg-primary/8 px-4 py-4 text-center overflow-x-auto">
+                                <RichText text={trimmed} />
+                              </div>
+                            );
+                          }
+                          return trimmed.split("\n").filter(l => l.trim()).map((line, li) => (
+                            <p key={`${si}-${li}`} className="text-[16px] leading-relaxed text-foreground">
+                              <RichText text={line} />
+                            </p>
+                          ));
+                        })}
+                      </div>
+                      <button
+                        onClick={() => onAskWhale(`Explain step ${idx + 1}: ${cleanText}`)}
+                        className="mt-5 flex items-center gap-2 rounded-xl border border-border px-3 py-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                      >
+                        <img src="/blue.png" alt="" draggable={false} className="whale-img h-4 w-4 rounded-full object-cover shrink-0" />
+                        Ask Blue about this step
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Next step — faded peek so user knows what's coming */}
+                  {nextText && (
+                    <div key={`next-${idx}`} className="pointer-events-none select-none rounded-xl border border-border/30 bg-card/30 px-4 py-3 opacity-35 animate-in fade-in duration-200 fill-mode-both">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground mb-1">
+                        ↓ Step {idx + 2}
+                      </p>
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {nextText.replace(/\$\$?[^$]*\$\$?/g, "…").substring(0, 100)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── PRACTICE card ── */}
+            {card.type === "practice" && (() => {
+              const { problem, practiceIdx } = card as Extract<DeckCard, { type: "practice" }>;
+              const mc = mcStates[problem.id];
+              const chosen = practiceAnswers[problem.id];
+              const answered = chosen !== undefined;
+              const isCorrect = answered && mc && chosen === mc.correctIdx;
+              return (
+                <div className="space-y-5">
+                  {/* Streak counter — shows only when streak is ≥ 2 */}
+                  {practiceStreak >= 2 && (
+                    <div className="flex items-center justify-center gap-1.5 rounded-full border border-yellow-500/30 bg-yellow-500/10 py-2 text-sm font-black text-yellow-500 animate-in fade-in duration-300">
+                      <Flame className="h-4 w-4" />
+                      {practiceStreak} in a row{practiceStreak >= 3 ? " · ×2 XP!" : " · ×1.5 XP!"}
+                    </div>
+                  )}
+
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                    Question {practiceIdx + 1} of {practice.length}
+                  </p>
+
+                  <p className="text-[17px] font-semibold leading-relaxed text-foreground">
+                    <RichText text={problem.question} />
+                  </p>
+
+                  {/* Multiple choice options */}
+                  {mc ? (
+                    <div className="flex flex-col gap-2.5">
+                      {mc.options.map((opt, optIdx) => {
+                        const isChosen = chosen === optIdx;
+                        const isThisCorrect = optIdx === mc.correctIdx;
+                        return (
+                          <button
+                            key={optIdx}
+                            disabled={answered}
+                            onClick={() => handleAnswer(problem.id, optIdx, mc.correctIdx)}
+                            className={cn(
+                              "rounded-xl border px-4 py-3.5 text-left text-[15px] font-medium transition-all active:scale-[0.99]",
+                              !answered && "border-border text-foreground hover:border-primary/50 hover:bg-primary/5",
+                              answered && isThisCorrect && "border-green-500/40 bg-green-500/10 text-green-400 font-semibold",
+                              answered && isChosen && !isThisCorrect && "border-red-500/30 bg-red-500/10 text-red-400",
+                              answered && !isChosen && !isThisCorrect && "border-border/30 text-muted-foreground/40 opacity-60"
+                            )}
+                          >
+                            <span className="mr-2.5 font-black text-primary/70">{String.fromCharCode(65 + optIdx)}.</span>
+                            <RichText text={opt} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm text-foreground">
+                      <RichText text={problem.answer} />
+                    </div>
+                  )}
+
+                  {/* Feedback — correct: green confirmation. Incorrect: Explain button (no accusatory text) */}
+                  {answered && isCorrect && (
+                    <div className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-400 animate-in fade-in duration-300">
+                      Correct ✓
+                    </div>
+                  )}
+                  {answered && !isCorrect && (
+                    <button
+                      onClick={() => onAskWhale(`I just got this question wrong. Can you explain it to me?\n\nQuestion: ${problem.question}\nCorrect answer: ${problem.answer}`)}
+                      className="w-full flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm font-black text-foreground transition-all hover:border-primary/40 hover:bg-primary/5 animate-in fade-in duration-300"
+                    >
+                      <img src="/blue.png" alt="" draggable={false} className="whale-img h-5 w-5 shrink-0" />
+                      Explain →
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── WIN card ── */}
+            {card.type === "win" && (
+              <div className="flex flex-col items-center text-center gap-7 py-10">
+                {/* Custom bullseye icon */}
+                <div className="animate-in zoom-in duration-500">
+                  <svg viewBox="0 0 80 80" className="h-24 w-24 text-primary" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="40" cy="40" r="36" strokeWidth="2" strokeOpacity="0.2" />
+                    <circle cx="40" cy="40" r="24" strokeWidth="2" strokeOpacity="0.45" />
+                    <circle cx="40" cy="40" r="12" strokeWidth="2.5" />
+                    <circle cx="40" cy="40" r="4" fill="currentColor" stroke="none" />
+                    {/* Arrow shaft */}
+                    <line x1="60" y1="20" x2="44" y2="36" strokeWidth="2.5" />
+                    {/* Arrowhead */}
+                    <polyline points="54,20 60,20 60,26" strokeWidth="2.5" />
+                  </svg>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Session complete</p>
+                  <p className="text-7xl font-black tracking-tighter text-foreground leading-none">+{sessionXP}</p>
+                  <p className="text-2xl font-black text-primary">XP earned</p>
+                </div>
+
+                <div className="flex flex-col gap-3 w-full max-w-xs">
+                  <button
+                    onClick={() => navigate("/dive")}
+                    className="w-full rounded-2xl bg-primary py-4 text-base font-black text-primary-foreground transition-all hover:bg-primary/90 hover:scale-[1.01] active:scale-[0.99]"
+                  >
+                    Scan another →
+                  </button>
+                  <button
+                    onClick={() => navigate("/dashboard")}
+                    className="w-full rounded-2xl border border-border py-3 text-sm font-semibold text-foreground/70 transition-colors hover:bg-accent"
+                  >
+                    Back to Home
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom nav */}
+      {card.type !== "win" && (
+        <div className="shrink-0 px-4 sm:px-6 py-3 flex items-center gap-2.5 border-t border-border/50">
+          {cardIndex > 0 && (
+            <button
+              onClick={goBack}
+              className="h-11 rounded-xl border border-border px-4 text-sm font-semibold text-foreground/70 transition-colors hover:bg-accent shrink-0"
+            >
+              ← Back
+            </button>
+          )}
+          {(!isPracticeCard || isAnswered) && (
+            <button
+              onClick={goNext}
+              className="flex-1 h-11 rounded-xl bg-primary text-sm font-black text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.99]"
+            >
+              {cardIndex >= totalCards - 2 ? "Finish →" : "Got it →"}
+            </button>
+          )}
+          {isPracticeCard && !isAnswered && (
+            <button
+              onClick={goNext}
+              className="flex-1 h-11 rounded-xl border border-border text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent"
+            >
+              Skip →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 const BlindSpotReport = () => {
@@ -1016,7 +1591,7 @@ const BlindSpotReport = () => {
 
   const [displaySrc, setDisplaySrc] = useState<string | null>(imageSrc);
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [whaleOpen, setWhaleOpen] = useState(true);
+  const [whaleOpen, setWhaleOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1024);
   const [pendingWhaleMessage, setPendingWhaleMessage] = useState<string | null>(null);
 
   function askWhale(text: string) {
@@ -1095,22 +1670,35 @@ const BlindSpotReport = () => {
     } catch { /* ignore */ }
   }
 
+  const [deleteScanOpen, setDeleteScanOpen] = useState(false);
+
+  async function handleDeleteScan() {
+    if (!scanId) return;
+    await (supabase as any).from("error_logs").delete().eq("id", scanId);
+    try { localStorage.removeItem(SCAN_CACHE_KEY(scanId)); } catch { /* ignore */ }
+    navigate("/dashboard");
+  }
+
   const [plan, setPlan] = useState<string>("free");
   const [planLoaded, setPlanLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ReportTab>(mode === "guide" ? "steps" : "error");
-  const [revealedSteps, setRevealedSteps] = useState(1);
   const [extraProblems, setExtraProblems] = useState<PracticeItem[]>([]);
   const [isGeneratingMore, setIsGeneratingMore] = useState(false);
   const [moreLoadsCount, setMoreLoadsCount] = useState(0);
-  const [lazyConceptData, setLazyConceptData] = useState<{ core_concept?: string; recognition_cue?: string } | null>(null);
   const [lazyPractice, setLazyPractice] = useState<PracticeItem[] | null>(null);
   const [lazySteps, setLazySteps] = useState<string[] | null>(null);
-  const [loadingConcept, setLoadingConcept] = useState(false);
   const [loadingPractice, setLoadingPractice] = useState(false);
   const [loadingSteps, setLoadingSteps] = useState(false);
   const fetchStepsMounted = useRef(true);
   useEffect(() => { return () => { fetchStepsMounted.current = false; }; }, []);
+
+  // Reset lazily-loaded data when the user navigates to a different scan —
+  // otherwise stale steps/practice from the previous report can stick around
+  // (BlindSpotReport doesn't remount when navigating scan-to-scan on /report).
+  useEffect(() => {
+    setLazySteps(null);
+    setLazyPractice(null);
+  }, [scanId]);
 
   // Keep displaySrc in sync when navigation brings a new image
   useEffect(() => {
@@ -1124,12 +1712,6 @@ const BlindSpotReport = () => {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Listen for practice tab trigger from Blue chat
-  useEffect(() => {
-    const handleScrollToPractice = () => setActiveTab("practice");
-    window.addEventListener("scroll-to-practice-tab", handleScrollToPractice);
-    return () => window.removeEventListener("scroll-to-practice-tab", handleScrollToPractice);
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1161,7 +1743,6 @@ const BlindSpotReport = () => {
       const steps: string[] = Array.isArray((data as any)?.steps) ? (data as any).steps : [];
       if (steps.length) {
         setLazySteps(steps);
-        setRevealedSteps(1);
         if (scanId) {
           try {
             const key = SCAN_CACHE_KEY(scanId);
@@ -1178,47 +1759,14 @@ const BlindSpotReport = () => {
   }, [diagnosis, loadingSteps, scanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const existingSteps = Array.isArray((diagnosis as any)?.steps) ? (diagnosis as any).steps as string[] : [];
+    const existingSteps = (Array.isArray((diagnosis as any)?.steps) ? (diagnosis as any).steps as string[] : []).filter((s) => s.trim());
     if (existingSteps.length > 0) return;
     if (lazySteps !== null) return;
     fetchSteps();
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, scanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lazy load concept when Concept tab is first clicked
+  // Eagerly load practice as soon as plan is known
   useEffect(() => {
-    if (activeTab !== "concept") return;
-    if (loadingConcept || lazyConceptData) return;
-    if ((diagnosis as any)?.core_concept) return; // already in cached diagnosis
-    const topic = (diagnosis as any)?.concept_label ?? (diagnosis as any)?.question_summary ?? "STEM";
-    const complexity = parseInt(localStorage.getItem("gogodeep_complexity") ?? "2", 10);
-    let mounted = true;
-    setLoadingConcept(true);
-    supabase.functions.invoke("diagnose-image", {
-      body: { mode: "guide_concept", topic, what_happened: (diagnosis as any)?.what_happened, complexity },
-    }).then(({ data, error }) => {
-      if (!mounted) return;
-      setLoadingConcept(false);
-      if (error || (data as any)?.error) { whaleToast.error("Failed to load concept."); return; }
-      const result = { core_concept: (data as any)?.core_concept, recognition_cue: (data as any)?.recognition_cue };
-      setLazyConceptData(result);
-      if (scanId) {
-        try {
-          const key = SCAN_CACHE_KEY(scanId);
-          const cached = localStorage.getItem(key);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            parsed.diagnosis = { ...parsed.diagnosis, ...result };
-            localStorage.setItem(key, JSON.stringify(parsed));
-          }
-        } catch { /* ignore */ }
-      }
-    });
-    return () => { mounted = false; };
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Lazy load practice when Practice tab is first clicked (waits for plan)
-  useEffect(() => {
-    if (activeTab !== "practice") return;
     if (!planLoaded) return;
     if (loadingPractice || lazyPractice !== null) return;
     if (Array.isArray((diagnosis as any)?.practice_problems) && (diagnosis as any).practice_problems.length > 0) return;
@@ -1247,7 +1795,7 @@ const BlindSpotReport = () => {
       }
     });
     return () => { mounted = false; };
-  }, [activeTab, planLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [planLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const MAX_MORE_LOADS = 10;
@@ -1277,11 +1825,11 @@ const BlindSpotReport = () => {
           <div className="space-y-4 text-center">
             <BookOpen className="mx-auto h-10 w-10 text-muted-foreground" />
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">No report available</p>
-            <p className="text-sm text-muted-foreground">Upload an image in the Workspace first.</p>
-            <Link to="/workspace">
+            <p className="text-sm text-muted-foreground">Upload an image in Dive first.</p>
+            <Link to="/dive">
               <Button variant="outline" className="mt-4 gap-2 border-border">
                 <ArrowLeft className="h-3.5 w-3.5" />
-                Go to Lab
+                Go to Dive
               </Button>
             </Link>
           </div>
@@ -1293,8 +1841,6 @@ const BlindSpotReport = () => {
   const effectiveSteps = (lazySteps ?? (Array.isArray((diagnosis as any).steps) ? (diagnosis as any).steps as string[] : [])).filter((s: string) => s.trim());
   const basePractice = lazyPractice ?? (Array.isArray(diagnosis.practice_problems) ? diagnosis.practice_problems : []);
   const practice = [...basePractice, ...extraProblems];
-  const effectiveConcept = lazyConceptData?.core_concept ?? (diagnosis as any)?.core_concept;
-  const effectiveRecognitionCue = lazyConceptData?.recognition_cue ?? (diagnosis as any)?.recognition_cue;
   const relatedModels = findRelatedModels(diagnosis);
 
   const scanXP = calcScanXP(
@@ -1330,23 +1876,40 @@ const BlindSpotReport = () => {
       <span className="shrink-0 rounded-full bg-primary/10 px-3 py-1 text-sm font-black text-primary">
         +{scanXP} XP
       </span>
+      {scanId && (
+        <button
+          onClick={() => setDeleteScanOpen(true)}
+          title="Delete scan"
+          className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 
-  const tabList = mode === "guide"
-    ? [
-        { value: "steps" as ReportTab, label: "Step by Step", Icon: ArrowRight },
-        { value: "concept" as ReportTab, label: "Concept", Icon: Lightbulb },
-        { value: "practice" as ReportTab, label: "Practice", Icon: ClipboardList },
-      ]
-    : [
-        { value: "error" as ReportTab, label: "Error Found", Icon: TriangleAlert },
-        { value: "concept" as ReportTab, label: "Concept", Icon: Lightbulb },
-        { value: "practice" as ReportTab, label: "Practice", Icon: ClipboardList },
-      ];
-  const activeIdx = tabList.findIndex((t) => t.value === activeTab);
 
   return (
+    <>
+    <AlertDialog open={deleteScanOpen} onOpenChange={setDeleteScanOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this scan?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This can't be undone. The scan and all its data will be permanently removed.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={handleDeleteScan}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     <EducatorLayout headerContent={titleHeaderContent} fullBleed noSidebar>
       <Helmet>
         <title>Report</title>
@@ -1357,91 +1920,29 @@ const BlindSpotReport = () => {
       {/* Resizable split container */}
       <div ref={splitContainerRef} className="relative flex h-full min-h-0">
 
-        {/* ── Left: tabs ───────────────────────────────────────────────────── */}
+        {/* ── Left: deck ───────────────────────────────────────────────────── */}
         <div
           ref={leftPaneRef}
           style={{ width: whaleOpen ? `${splitLeft}%` : "100%" }}
-          className="flex min-w-0 flex-col overflow-y-auto transition-[width] duration-300 ease-in-out"
+          className="flex min-w-0 flex-col overflow-hidden transition-[width] duration-300 ease-in-out"
         >
-          <div className="p-6 space-y-4">
-            {/* Guest signup banner */}
-            {isGuest && (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">Save your results</p>
-                  <p className="text-xs text-muted-foreground">Create a free account to keep this scan and get more.</p>
-                </div>
-                <Button className="shrink-0 bg-primary hover:bg-primary/90 text-xs h-8 px-3" onClick={() => navigate("/signup")}>
-                  Sign up free
-                  <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-                </Button>
-              </div>
-            )}
-            {/* Tab bar */}
-            <div className="relative flex w-full rounded-md border border-border bg-secondary p-1">
-              <div
-                className="absolute bottom-1 top-1 rounded-sm bg-card shadow-sm transition-transform duration-200 ease-out"
-                style={{ width: `calc((100% - 8px) / ${tabList.length})`, transform: `translateX(calc(${activeIdx} * 100%))` }}
-              />
-              {tabList.map(({ value, label, Icon }) => (
-                <button
-                  key={value}
-                  onClick={() => setActiveTab(value)}
-                  className={`relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-sm py-1.5 text-xs sm:text-sm font-medium transition-colors duration-200 ${
-                    activeTab === value ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Icon className="h-4 w-4 sm:h-3.5 sm:w-3.5 shrink-0" />
-                  <span className="hidden sm:inline truncate">{label}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Tab content */}
-            <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-3 duration-300 fill-mode-both">
-              {activeTab === "steps" && (
-                <StepsTab
-                  diagnosis={diagnosis as GuideDiagnosis}
-                  steps={effectiveSteps}
-                  revealed={revealedSteps}
-                  setRevealed={setRevealedSteps}
-                  plan={plan}
-                  isLoading={loadingSteps}
-                  imageSrc={displaySrc}
-                  inputText={inputText}
-                  onImageClick={() => setLightboxOpen(true)}
-                  onAskWhale={askWhale}
-                  onRetry={fetchSteps}
-                />
-              )}
-              {activeTab === "error" && <IdentifyErrorTab diagnosis={diagnosis as IdentifyDiagnosis} />}
-              {activeTab === "concept" && (
-                <ConceptTab
-                  whatHappened={diagnosis.what_happened}
-                  coreConcept={effectiveConcept}
-                  recognitionCue={effectiveRecognitionCue}
-                  legacyConcept={diagnosis.underlying_concept}
-                  plan={plan}
-                  onMasterClick={() => setActiveTab("practice")}
-                  isLoadingConcept={loadingConcept}
-                  onAskWhale={askWhale}
-                />
-              )}
-              {activeTab === "practice" && (
-                <PracticeTab
-                  problems={practice}
-                  plan={plan}
-                  onGenerateMore={generateMoreProblems}
-                  isGeneratingMore={isGeneratingMore}
-                  isLoadingPractice={loadingPractice}
-                  onAskWhale={askWhale}
-                  userId={userId}
-                  moreLoadsCount={moreLoadsCount}
-                  maxMoreLoads={MAX_MORE_LOADS}
-                />
-              )}
-            </div>
-          </div>
+          <DeckReport
+            key={scanId ?? (diagnosis as any)?.question_summary ?? "guest"}
+            diagnosis={diagnosis}
+            mode={mode}
+            effectiveSteps={effectiveSteps}
+            practice={practice}
+            imageSrc={displaySrc}
+            inputText={inputText}
+            onAskWhale={askWhale}
+            userId={userId}
+            scanXP={scanXP}
+            onImageClick={() => setLightboxOpen(true)}
+            loadingSteps={loadingSteps}
+            loadingPractice={loadingPractice}
+            isGuest={isGuest}
+            onSignup={() => navigate("/signup")}
+          />
         </div>
 
         {/* ── Draggable divider ─────────────────────────────────────────────── */}
@@ -1503,6 +2004,7 @@ const BlindSpotReport = () => {
         </div>
       )}
     </EducatorLayout>
+    </>
   );
 };
 

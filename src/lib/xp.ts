@@ -8,8 +8,18 @@ export function calcRelativeScanXP(
   topic: string | null,
   errorCategory: string | null,
   allLabels: (string | null)[],
+  seed?: string,
 ): number {
-  return calcDynamicScanXP(topic, errorCategory, allLabels.map(l => ({ topic: l, error_category: null })));
+  return calcDynamicScanXP(topic, errorCategory, allLabels.map(l => ({ topic: l, error_category: null })), seed);
+}
+
+/** Deterministic pseudo-random in [0, 1), derived from a stable string (e.g. a scan id). */
+function seededRandom(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
+  }
+  return ((h >>> 0) % 100000) / 100000;
 }
 
 export const QUIZ_XP = 50;
@@ -60,9 +70,13 @@ export function calcDynamicScanXP(
   topic: string | null,
   errorCategory: string | null,
   history: { topic: string | null; error_category: string | null }[],
+  seed?: string,
 ): number {
-  // add per-scan noise here, not in scoreDifficulty, so display calls stay stable
-  const thisScore = Math.max(0, Math.min(10, scoreDifficulty(topic, errorCategory) + (Math.random() - 0.5) * 3));
+  // Per-scan noise is derived from a stable seed (the scan id) when available, so
+  // recomputing a past scan's XP always yields the same number — otherwise the
+  // dashboard's total XP would drift up and down by chance on every reload.
+  const noise = seed ? seededRandom(seed) - 0.5 : Math.random() - 0.5;
+  const thisScore = Math.max(0, Math.min(10, scoreDifficulty(topic, errorCategory) + noise * 3));
 
   // personal baseline: mean difficulty of recent scans
   const baseline = history.length >= 3

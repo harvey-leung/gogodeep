@@ -1,12 +1,21 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Pencil, Search, X, Pin } from "lucide-react";
+import { Pencil, Search, X, Pin, MoreHorizontal, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { SCAN_CACHE_KEY } from "@/lib/supabase";
 import { whaleToast } from "@/lib/whaleToast";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -79,14 +88,17 @@ function scanLabel(scan: Scan, names: Record<string, string>): string {
 
 export default function HistorySidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const activeScanId = (location.state as any)?.scanId as string | undefined;
   const [state, setState] = useState<LabState>(loadLocalState);
   const [searchQuery, setSearchQuery] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Scan | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if (e.key === "/" && !["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
@@ -155,6 +167,17 @@ export default function HistorySidebar() {
     update({ ...state, pins });
   }
 
+  async function deleteScan(scanId: string) {
+    await (supabase as any).from("error_logs").delete().eq("id", scanId);
+    try { localStorage.removeItem(SCAN_CACHE_KEY(scanId)); } catch { /* ignore */ }
+    const names = { ...state.names };
+    delete names[scanId];
+    const pins = state.pins.filter((id) => id !== scanId);
+    update({ names, pins });
+    queryClient.invalidateQueries({ queryKey: ["history", "error_logs"] });
+    if (activeScanId === scanId) navigate("/dive");
+  }
+
   // Sort: pinned first, then rest in original order
   const sortedScans = useMemo(() => {
     const pinSet = new Set(state.pins);
@@ -172,6 +195,7 @@ export default function HistorySidebar() {
   const displayScans = filteredScans ?? sortedScans;
 
   return (
+    <>
     <div className="flex flex-col py-2">
 
       {/* ── Search ── */}
@@ -182,7 +206,7 @@ export default function HistorySidebar() {
             ref={searchRef}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search  ⌘K"
+            placeholder="Search  /"
             className="w-full rounded-md border border-border bg-secondary/50 py-1.5 pl-7 pr-7 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
           />
           {searchQuery && (
@@ -217,6 +241,7 @@ export default function HistorySidebar() {
                 isPinned={state.pins.includes(scan.id)}
                 onRename={renameScan}
                 onTogglePin={togglePin}
+                onDelete={(s) => setDeleteTarget(s)}
                 isActive={scan.id === activeScanId}
               />
             ))}
@@ -225,6 +250,26 @@ export default function HistorySidebar() {
       </div>
 
     </div>
+    <AlertDialog open={!!deleteTarget} onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this scan?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This can't be undone. The scan and all its data will be permanently removed.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => { if (deleteTarget) { deleteScan(deleteTarget.id); setDeleteTarget(null); } }}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 
@@ -236,6 +281,7 @@ function ScanRow({
   isPinned,
   onRename,
   onTogglePin,
+  onDelete,
   isActive = false,
 }: {
   scan: Scan;
@@ -243,6 +289,7 @@ function ScanRow({
   isPinned: boolean;
   onRename: (scanId: string, name: string) => void;
   onTogglePin: (scanId: string) => void;
+  onDelete: (scan: Scan) => void;
   isActive?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -323,23 +370,40 @@ function ScanRow({
         <p className={cn("min-w-0 flex-1 truncate text-[13px] font-medium leading-snug", isActive ? "text-primary" : "text-foreground")}>{label}</p>
       )}
 
-      <div className="flex shrink-0 items-center gap-0.5 overflow-hidden w-0 opacity-0 group-hover:w-auto group-hover:opacity-100 transition-all duration-150">
-        <button
-          data-action-btn
-          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-          className="rounded p-0.5 text-muted-foreground hover:text-foreground"
-          title="Rename"
-        >
-          <Pencil className="h-3 w-3" />
-        </button>
-        <button
-          data-action-btn
-          onClick={(e) => { e.stopPropagation(); onTogglePin(scan.id); }}
-          className={cn("rounded p-0.5 transition-colors hover:text-foreground", isPinned ? "text-primary" : "text-muted-foreground")}
-          title={isPinned ? "Unpin" : "Pin to top"}
-        >
-          <Pin className={cn("h-3 w-3", isPinned && "fill-current")} />
-        </button>
+      <div data-action-btn className="shrink-0 w-0 opacity-0 group-hover:w-auto group-hover:opacity-100 transition-all duration-150">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+              title="Options"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="w-36 border border-border bg-card text-xs">
+            <DropdownMenuItem
+              className="cursor-pointer gap-2 text-xs"
+              onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+            >
+              <Pencil className="h-3 w-3" /> Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer gap-2 text-xs"
+              onClick={(e) => { e.stopPropagation(); onTogglePin(scan.id); }}
+            >
+              <Pin className={cn("h-3 w-3", isPinned && "fill-current text-primary")} />
+              {isPinned ? "Unpin" : "Pin to top"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="cursor-pointer gap-2 text-xs text-destructive focus:text-destructive"
+              onClick={(e) => { e.stopPropagation(); onDelete(scan); }}
+            >
+              <Trash2 className="h-3 w-3" /> Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
