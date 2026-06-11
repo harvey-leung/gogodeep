@@ -60,17 +60,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Enforce rate limit: free users max 1 quiz/hour, deep users unlimited
-    if (plan !== "deep" && userId && lastQuizDate === today) {
-      return new Response(
-        JSON.stringify({
-          error: "daily_quiz_limit",
-          message: "You've already generated a quiz today. Come back tomorrow!",
-        }),
-        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     if (!ANTHROPIC_API_KEY) {
       return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY is not configured" }), {
@@ -78,6 +67,49 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Atomically claim today's quiz slot BEFORE spending AI budget. consume_quiz_credit
+    // does a single conditional UPDATE, so concurrent requests can't both claim it.
+    // Deep plan is unlimited.
+    let quizClaimed = false;
+    if (plan !== "deep") {
+      const claimRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consume_quiz_credit`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ p_user_id: userId, p_today: today }),
+      });
+      if (!claimRes.ok) {
+        console.error("consume_quiz_credit failed:", claimRes.status, await claimRes.text());
+        return new Response(JSON.stringify({ error: "Could not verify your quiz allowance. Please try again." }), {
+          status: 503,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const allowed = await claimRes.json();
+      if (allowed !== true) {
+        return new Response(JSON.stringify({
+          error: "daily_quiz_limit",
+          message: "You've already generated a quiz today. Come back tomorrow!",
+        }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      quizClaimed = true;
+    }
+
+    // Release the claimed slot if generation fails, so a transient error doesn't
+    // burn the user's one daily quiz.
+    const releaseQuiz = async () => {
+      if (!quizClaimed) return;
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+          method: "PATCH",
+          headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY, "Content-Type": "application/json", "Prefer": "return=minimal" },
+          body: JSON.stringify({ last_quiz_date: null }),
+        });
+      } catch { /* best effort */ }
+    };
 
     const topicList = (topics as string[]).slice(0, 5).join(", ");
 
@@ -133,6 +165,7 @@ Deno.serve(async (req: Request) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Anthropic API error:", response.status, errorText);
+      await releaseQuiz();
       return new Response(JSON.stringify({ error: "Failed to generate quiz", detail: errorText }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -144,26 +177,14 @@ Deno.serve(async (req: Request) => {
 
     if (!toolUse) {
       console.error("No tool_use block in response:", JSON.stringify(data));
+      await releaseQuiz();
       return new Response(JSON.stringify({ error: "AI did not return quiz data" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Record quiz generation for rate limiting (free users only)
-    if (userId && plan !== "deep") {
-      await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
-        method: "PATCH",
-        headers: {
-          "Authorization": `Bearer ${SERVICE_KEY}`,
-          "apikey": SERVICE_KEY,
-          "Content-Type": "application/json",
-          "Prefer": "return=minimal",
-        },
-        body: JSON.stringify({ last_quiz_date: today }),
-      });
-    }
-
+    // Slot was already claimed atomically before the AI call.
     return new Response(JSON.stringify(toolUse.input), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -30,8 +30,6 @@ Deno.serve(async (req: Request) => {
 
     let userId: string | null = null;
     let plan = "free";
-    let currentCredits = 0;
-    let minuteCount = 0;
     const today = new Date().toISOString().split("T")[0];
     const currentMinute = Math.floor(Date.now() / 60000);
 
@@ -42,26 +40,6 @@ Deno.serve(async (req: Request) => {
       });
       const userData = await userRes.json();
       userId = userData?.id ?? null;
-
-      if (userId) {
-        // Fetch profile once with all needed fields
-        const profileRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=plan,whale_chat_credits,whale_chat_date,whale_chat_minute_count,whale_chat_minute`,
-          { headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY } }
-        );
-        const profiles = await profileRes.json();
-        const profile = Array.isArray(profiles) ? profiles[0] : null;
-
-        if (profile) {
-          plan = profile.plan ?? "free";
-          const isNewDay = profile.whale_chat_date !== today;
-          currentCredits = isNewDay ? 0 : (profile.whale_chat_credits ?? 0);
-
-          // Check per-minute throttle
-          const lastMinute = profile.whale_chat_minute ?? 0;
-          minuteCount = lastMinute === currentMinute ? (profile.whale_chat_minute_count ?? 0) : 0;
-        }
-      }
     }
 
     // Require authentication — no guest chat (prevents anonymous AI-budget drain).
@@ -72,30 +50,53 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Per-minute throttle for free users: max 3 msgs/minute
-    if (plan !== "deep" && userId && minuteCount >= MAX_MESSAGES_PER_MINUTE) {
-      return new Response(
-        JSON.stringify({
-          error: "rate_limited",
-          message: "You're sending messages too quickly. Please wait a moment.",
-        }),
-        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Look up the plan (only non-deep users are rate limited).
+    const profileRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=plan`,
+      { headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY } }
+    );
+    const profiles = await profileRes.json();
+    plan = (Array.isArray(profiles) ? profiles[0]?.plan : null) ?? "free";
 
-    // Enforce limit for non-deep users
     const lastMessage = messages[messages.length - 1]?.content ?? "";
     const cost = messageCost(lastMessage);
 
-    if (plan !== "deep" && userId && currentCredits >= WHALE_CREDIT_LIMIT) {
-      return new Response(
-        JSON.stringify({
-          error: "daily_limit_reached",
-          creditsUsed: currentCredits,
-          creditsLimit: WHALE_CREDIT_LIMIT,
+    // Atomically check + reserve the per-minute throttle and daily credit budget
+    // BEFORE spending any AI budget (consume_whale_chat locks the profile row, so
+    // concurrent requests can't both slip past). Deep plan is unlimited.
+    let creditsUsed = 0;
+    if (plan !== "deep") {
+      const rlRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consume_whale_chat`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          p_user_id: userId, p_cost: cost, p_minute: currentMinute, p_today: today,
+          p_minute_limit: MAX_MESSAGES_PER_MINUTE, p_credit_limit: WHALE_CREDIT_LIMIT,
         }),
-        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      });
+      if (!rlRes.ok) {
+        console.error("consume_whale_chat failed:", rlRes.status, await rlRes.text());
+        return new Response(
+          JSON.stringify({ error: "Could not verify your chat limit. Please try again." }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const rows = await rlRes.json();
+      const row = Array.isArray(rows) ? rows[0] : rows;
+
+      if (row?.status === "rate_limited") {
+        return new Response(
+          JSON.stringify({ error: "rate_limited", message: "You're sending messages too quickly. Please wait a moment." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (row?.status === "daily_limit_reached") {
+        return new Response(
+          JSON.stringify({ error: "daily_limit_reached", creditsUsed: row?.credits_used ?? WHALE_CREDIT_LIMIT, creditsLimit: WHALE_CREDIT_LIMIT }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      creditsUsed = row?.credits_used ?? cost;
     }
 
     // ── AI call ──────────────────────────────────────────────────────────────
@@ -143,30 +144,11 @@ Answer academic questions (maths, physics, chemistry, biology, etc.) using the s
 
     const reply = data.content?.[0]?.text ?? "";
 
-    // ── Increment credits after successful response ───────────────────────────
-    const newCredits = currentCredits + cost;
-    if (userId && plan !== "deep") {
-      await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
-        method: "PATCH",
-        headers: {
-          "Authorization": `Bearer ${SERVICE_KEY}`,
-          "apikey": SERVICE_KEY,
-          "Content-Type": "application/json",
-          "Prefer": "return=minimal",
-        },
-        body: JSON.stringify({
-          whale_chat_credits: newCredits,
-          whale_chat_date: today,
-          whale_chat_minute_count: minuteCount + 1,
-          whale_chat_minute: currentMinute,
-        }),
-      });
-    }
-
+    // Credits were already reserved atomically before the AI call.
     return new Response(
       JSON.stringify({
         reply,
-        creditsUsed: plan === "deep" ? 0 : newCredits,
+        creditsUsed: plan === "deep" ? 0 : creditsUsed,
         creditsLimit: WHALE_CREDIT_LIMIT,
         showPracticeButton: !!stepContext,
       }),
