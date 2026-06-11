@@ -315,36 +315,23 @@ const Dashboard = ({ user }: { user: User }) => {
 
   useEffect(() => {
     const load = async () => {
-      const [logsRes, profileRes] = await Promise.all([
+      // claim_daily_login does the scan-count reset + streak + bonus-credit logic
+      // server-side (these profiles columns are no longer client-writable).
+      const [logsRes, claimRes] = await Promise.all([
         (supabase as any).from("error_logs").select("id, error_category, specific_error_tag, topic, created_at").eq("student_id", user.id).order("created_at", { ascending: false }),
-        (supabase as any).from("profiles").select("daily_scan_count, scan_reset_date, plan, login_streak, last_login_date, bonus_scans").eq("id", user.id).single(),
+        (supabase as any).rpc("claim_daily_login"),
       ]);
 
       const logs: ErrorLog[] = logsRes.data ?? [];
-      const plan: string = profileRes.data?.plan ?? "free";
-      const today = new Date().toISOString().split("T")[0];
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
-      const isNewDay = (profileRes.data?.scan_reset_date ?? "") < today;
-      if (isNewDay) {
-        await (supabase as any).from("profiles").update({ daily_scan_count: 0, scan_reset_date: today }).eq("id", user.id);
-      }
-      const used = isNewDay ? 0 : (profileRes.data?.daily_scan_count ?? 0);
-      let bonusScans: number = profileRes.data?.bonus_scans ?? 0;
+      const claim = (Array.isArray(claimRes.data) ? claimRes.data[0] : claimRes.data) ?? {};
+      const plan: string = claim.plan ?? "free";
+      const used: number = claim.daily_scan_count ?? 0;
+      const bonusScans: number = claim.bonus_scans ?? 0;
+      const loginStreak: number = claim.login_streak ?? 0;
       const limit = plan in SCAN_LIMITS ? SCAN_LIMITS[plan] : SCAN_LIMITS.free;
 
-      // Streak logic
-      const lastLogin: string = profileRes.data?.last_login_date ?? "";
-      let loginStreak: number = profileRes.data?.login_streak ?? 0;
-      if (lastLogin < today) {
-        loginStreak = lastLogin === yesterday ? loginStreak + 1 : 1;
-        const streakUpdates: Record<string, unknown> = { last_login_date: today, login_streak: loginStreak };
-        if (plan !== "deep" && loginStreak % 7 === 0) {
-          const bonus = plan === "intermediate" ? 20 : 10;
-          bonusScans += bonus;
-          streakUpdates.bonus_scans = bonusScans;
-          whaleToast.success(`7-day streak! You've earned ${bonus} bonus credits.`);
-        }
-        await (supabase as any).from("profiles").update(streakUpdates).eq("id", user.id);
+      if ((claim.bonus_awarded ?? 0) > 0) {
+        whaleToast.success(`7-day streak! You've earned ${claim.bonus_awarded} bonus credits.`);
       }
 
       const creditsLeft = limit === null ? null : Math.max(0, (limit as number) - used) + bonusScans;
@@ -1637,14 +1624,17 @@ const DemoPanel = () => {
                       </button>
                     </div>
 
-                    {stepIdx === PERCENT_STEPS.length - 1 && (
-                      <button
-                        onClick={() => { setTab("practice"); lastInteractionRef.current = Date.now(); }}
-                        className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90 animate-in fade-in duration-300"
-                      >
-                        Practice this step <ArrowRight className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => { setTab("practice"); lastInteractionRef.current = Date.now(); }}
+                      className={cn(
+                        "mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90",
+                        stepIdx === PERCENT_STEPS.length - 1
+                          ? "animate-in fade-in duration-300"
+                          : "invisible pointer-events-none"
+                      )}
+                    >
+                      Practice this step <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 )}
               </div>

@@ -46,13 +46,9 @@ export async function checkScanCredits(): Promise<ScanCreditState> {
   const resetDate = (data as any)?.scan_reset_date ?? "";
   const isNewDay = resetDate < today;
 
-  if (isNewDay) {
-    await (supabase as any)
-      .from("profiles")
-      .update({ daily_scan_count: 0, scan_reset_date: today })
-      .eq("id", user.id);
-  }
-
+  // Advisory/UX check only — the server (consume_scan_credit) performs the
+  // authoritative daily reset and decrement. These columns are no longer
+  // client-writable, so we never write here.
   const used = isNewDay ? 0 : ((data as any)?.daily_scan_count ?? 0);
   const bonusScans = (data as any)?.bonus_scans ?? 0;
   const remaining = Math.max(0, limit - used) + bonusScans;
