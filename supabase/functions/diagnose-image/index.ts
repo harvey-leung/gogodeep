@@ -7,6 +7,71 @@ const corsHeaders = {
 const MATH = `
 MATHEMATICAL NOTATION: Express all math using LaTeX delimiters — inline as $...$ and display as $$...$$. Use LaTeX for all variables, fractions (\\frac{}{}), integrals (\\int), exponents, Greek letters, square roots (\\sqrt{}), etc. Never write math in plain text.`;
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const TURNSTILE_SECRET_KEY = Deno.env.get("TURNSTILE_SECRET_KEY");
+
+// Modes that represent a real "scan" (the expensive vision/primary calls).
+// Guests must pass Turnstile + the per-IP cap on these; the cheaper follow-up
+// modes (guide_concept, more_practice) are not gated for guests.
+const PRIMARY_MODES = new Set(["guide_steps", "guide", "identify"]);
+
+// Server-side image payload ceilings (base64 string length, not bytes).
+// Guests are capped tighter than authenticated users.
+const GUEST_MAX_IMAGE_B64 = 2_800_000; // ~2 MB of binary
+const USER_MAX_IMAGE_B64 = 9_000_000;  // ~6.5 MB of binary
+const GUEST_SCAN_LIMIT = 2;            // free guest scans per IP per day
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Verify a Cloudflare Turnstile token. Fails CLOSED: any error, missing secret,
+// or unsuccessful verification returns false so the guest scan is rejected.
+async function verifyTurnstile(token: string, ip: string): Promise<boolean> {
+  if (!TURNSTILE_SECRET_KEY) return false;
+  try {
+    const form = new URLSearchParams();
+    form.set("secret", TURNSTILE_SECRET_KEY);
+    form.set("response", token);
+    if (ip) form.set("remoteip", ip);
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+    const data = await res.json();
+    return data?.success === true;
+  } catch (e) {
+    console.error("Turnstile verify failed:", e);
+    return false;
+  }
+}
+
+// Resolve the user id from the bearer token, or null for guests (the client
+// sends the anon key as the bearer when logged out, which has no user).
+async function getUserId(jwt: string | undefined): Promise<string | null> {
+  if (!jwt) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { Authorization: `Bearer ${jwt}`, apikey: SERVICE_KEY },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -14,8 +79,64 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { image, mimeType, mode = "identify", text, practice_count, topic, start_id, what_happened, complexity = 2 } = body;
+    const { image, mimeType, mode = "identify", text, practice_count, topic, start_id, what_happened, complexity = 2, turnstileToken } = body;
     console.log("diagnose-image invoked, mode:", mode, "text:", !!text);
+
+    // ── Authentication & guest gating ─────────────────────────────────────────
+    const authHeader = req.headers.get("authorization");
+    const jwt = authHeader?.replace("Bearer ", "").trim();
+    const userId = await getUserId(jwt);
+    const today = new Date().toISOString().split("T")[0];
+
+    if (userId) {
+      // Authenticated: enforce the authenticated image ceiling. (Per-user scan
+      // credits are decremented in item 2.)
+      if (typeof image === "string" && image.length > USER_MAX_IMAGE_B64) {
+        return json({ error: "Image is too large. Please use a smaller photo." }, 413);
+      }
+    } else {
+      // Guest path. Require a verified Turnstile token; fail closed.
+      if (!TURNSTILE_SECRET_KEY) {
+        console.error("TURNSTILE_SECRET_KEY not configured — rejecting guest scan (fail closed).");
+        return json({ error: "Verification is temporarily unavailable. Please sign in to continue." }, 503);
+      }
+      if (typeof turnstileToken !== "string" || !turnstileToken) {
+        return json({ error: "verification_required", message: "Please complete the verification to scan." }, 401);
+      }
+      const ip = (req.headers.get("x-forwarded-for")?.split(",")[0] ?? "").trim();
+      const verified = await verifyTurnstile(turnstileToken, ip);
+      if (!verified) {
+        return json({ error: "verification_failed", message: "Verification failed. Please try again or sign in." }, 403);
+      }
+
+      // Tighter guest image ceiling.
+      if (typeof image === "string" && image.length > GUEST_MAX_IMAGE_B64) {
+        return json({ error: "Image is too large for a guest scan. Please sign in or use a smaller photo." }, 413);
+      }
+
+      // Per-IP daily cap on the expensive primary scan modes only.
+      if (PRIMARY_MODES.has(mode)) {
+        const ipHash = await sha256Hex(`${ip}|${SERVICE_KEY}`);
+        const capRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consume_guest_scan`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            apikey: SERVICE_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_ip_hash: ipHash, p_day: today, p_limit: GUEST_SCAN_LIMIT }),
+        });
+        if (!capRes.ok) {
+          console.error("consume_guest_scan failed:", capRes.status, await capRes.text());
+          return json({ error: "Could not verify your scan allowance. Please sign in to continue." }, 503);
+        }
+        const rows = await capRes.json();
+        const row = Array.isArray(rows) ? rows[0] : rows;
+        if (!row?.allowed) {
+          return json({ error: "guest_limit_reached", message: "You've used your free scans. Sign up for more." }, 429);
+        }
+      }
+    }
 
     function complexityInstruction(level: number): string {
       if (level === 1) return " Complexity level: SIMPLE. Use very plain everyday language a 14-year-old could follow. No jargon. Break every step into the smallest possible sub-steps. Use analogies instead of formulas where possible.";

@@ -10,6 +10,7 @@ import EducatorLayout from "@/components/EducatorLayout";
 import { checkScanCredits, SCAN_CACHE_KEY } from "@/lib/supabase";
 import { calcDynamicScanXP, CHALLENGE_BONUS_XP, addBonusXP } from "@/lib/xp";
 import { pendingFileStore, scanImageStore } from "@/lib/pendingFile";
+import { getGuestTurnstileToken, turnstileConfigured } from "@/lib/turnstile";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -260,8 +261,18 @@ const DiagnosticLab = () => {
           new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
         );
 
+        let turnstileToken: string | undefined;
+        if (isGuest && turnstileConfigured()) {
+          turnstileToken = (await getGuestTurnstileToken()) ?? undefined;
+          if (!turnstileToken) {
+            whaleToast.error("Verification failed. Please try again or sign in.");
+            setIsAnalyzing(false);
+            return;
+          }
+        }
+
         const { data, error } = await supabase.functions.invoke("diagnose-image", {
-          body: { image: base64, mimeType: safeMime, mode: "guide_steps", complexity: complexityLevel },
+          body: { image: base64, mimeType: safeMime, mode: "guide_steps", complexity: complexityLevel, turnstileToken },
         });
 
         if (error) {
@@ -395,8 +406,18 @@ const DiagnosticLab = () => {
         }
       }
 
+      let turnstileToken: string | undefined;
+      if (isGuest && turnstileConfigured()) {
+        turnstileToken = (await getGuestTurnstileToken()) ?? undefined;
+        if (!turnstileToken) {
+          whaleToast.error("Verification failed. Please try again or sign in.");
+          setIsAnalyzing(false);
+          return;
+        }
+      }
+
       const { data, error } = await supabase.functions.invoke("diagnose-image", {
-        body: { text: trimmed, mode: "guide_steps", complexity: 2 },
+        body: { text: trimmed, mode: "guide_steps", complexity: 2, turnstileToken },
       });
 
       if (error) {
