@@ -32,13 +32,14 @@ Deno.serve(async (req: Request) => {
     const authHeader = req.headers.get("authorization");
     const jwt = authHeader?.replace("Bearer ", "");
     let plan = "free";
+    let userId: string | null = null;
 
     if (jwt) {
       const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
         headers: { "Authorization": `Bearer ${jwt}`, "apikey": SERVICE_KEY },
       });
       const userData = await userRes.json();
-      const userId = userData?.id ?? null;
+      userId = userData?.id ?? null;
       if (userId) {
         const profileRes = await fetch(
           `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=plan`,
@@ -47,6 +48,14 @@ Deno.serve(async (req: Request) => {
         const profiles = await profileRes.json();
         plan = profiles?.[0]?.plan ?? "free";
       }
+    }
+
+    // Require authentication — no guest access (prevents anonymous AI-budget drain).
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "unauthorized", message: "Please sign in to use Streams." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const anthropicCall = async (systemPrompt: string, userContent: string, toolName: string, toolSchema: object) => {

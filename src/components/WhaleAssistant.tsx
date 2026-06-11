@@ -178,11 +178,11 @@ export default function WhaleAssistant() {
             ?? session.user.email?.split("@")[0]
             ?? "there";
           const phrases = [
-            "No excuses today.",
-            "Let's get to work.",
-            "Time to lock in.",
-            "Make today count.",
-            "Every mistake is data.",
+            "Today's your day.",
+            "Let's pick up where we left off.",
+            "Ready when you are.",
+            "Let's keep that streak going.",
+            "Glad you're here — let's dive in.",
           ];
           const phrase = phrases[Math.floor(Math.random() * phrases.length)];
           setTimeout(() => {
@@ -305,6 +305,16 @@ export default function WhaleAssistant() {
   async function send() {
     const text = input.trim();
     if (!text || loading) return;
+
+    // Chatting with Blue requires an account (server returns 401 for guests).
+    if (isGuest) {
+      setMessages((prev) => [...prev, { role: "user", content: text }, {
+        role: "assistant",
+        content: "Sign in to chat with me — it's free, and I'll remember your scans.",
+      }]);
+      setInput("");
+      return;
+    }
 
     if (plan !== null && plan !== "deep" && whaleCreditsUsed >= WHALE_CREDIT_LIMIT) {
       setUpgradeLimitMode(true);

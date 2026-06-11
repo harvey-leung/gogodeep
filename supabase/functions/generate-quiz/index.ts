@@ -12,7 +12,7 @@ Deno.serve(async (req: Request) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
   try {
-    const { topics } = await req.json();
+    const { topics, goal } = await req.json();
 
     if (!topics || !Array.isArray(topics) || topics.length === 0) {
       return new Response(JSON.stringify({ error: "No topics provided" }), {
@@ -52,6 +52,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Require authentication — no guest access (prevents anonymous AI-budget drain).
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "unauthorized", message: "Please sign in to generate a quiz." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Enforce rate limit: free users max 1 quiz/hour, deep users unlimited
     if (plan !== "deep" && userId && lastQuizDate === today) {
       return new Response(
@@ -87,7 +95,9 @@ Deno.serve(async (req: Request) => {
         messages: [
           {
             role: "user",
-            content: `Generate one multiple-choice quiz question for each of these STEM concepts: ${topicList}. Each question should test core understanding.`,
+            content: typeof goal === "string" && goal.trim()
+              ? `The student's overall learning goal is: "${goal.trim()}". Generate one multiple-choice quiz question for each of these sub-topics, with every question framed as a real, concrete problem related to "${goal.trim()}" — not generic or abstract, even if a sub-topic name sounds generic: ${topicList}. Each question should test core understanding.`
+              : `Generate one multiple-choice quiz question for each of these STEM concepts: ${topicList}. Each question should test core understanding.`,
           },
         ],
         tools: [

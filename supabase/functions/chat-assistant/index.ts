@@ -64,6 +64,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Require authentication — no guest chat (prevents anonymous AI-budget drain).
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: "unauthorized", message: "Please sign in to chat with Blue." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Per-minute throttle for free users: max 3 msgs/minute
     if (plan !== "deep" && userId && minuteCount >= MAX_MESSAGES_PER_MINUTE) {
       return new Response(

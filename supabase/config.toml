@@ -1,7 +1,15 @@
 project_id = "xscqfglapzciozvbpryf"
+
+# ── verify_jwt audit (Phase 0 / item 3) ──────────────────────────────────────
+# Platform JWT verification is OFF only where the code does its own auth (manual
+# JWT validation against /auth/v1/user) or has a different, documented trust
+# model (Stripe webhook signature). Every function below states which.
+
 [functions.create-checkout]
 enabled = true
-verify_jwt = false
+# verify_jwt = true: only authenticated users may start a checkout. (Follow-up:
+# the body still carries userId/email — derive these from the JWT instead.)
+verify_jwt = true
 import_map = "./functions/create-checkout/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -12,21 +20,31 @@ entrypoint = "./functions/create-checkout/index.ts"
 
 [functions.diagnose-image]
 enabled = true
+# verify_jwt = false: must stay false to allow the guest "one free scan" path.
+# The code does manual auth: authenticated callers are validated against
+# /auth/v1/user and have scan credits decremented (consume_scan_credit); guests
+# must pass a server-verified Cloudflare Turnstile token and a per-IP daily cap
+# (consume_guest_scan). Fails closed.
 verify_jwt = false
 entrypoint = "./functions/diagnose-image/index.ts"
 
 [functions.chat-assistant]
 enabled = true
+# verify_jwt = false: code does manual JWT validation against /auth/v1/user and
+# returns 401 for unauthenticated callers; credits/throttle enforced server-side.
 verify_jwt = false
 entrypoint = "./functions/chat-assistant/index.ts"
 
 [functions.billing-portal]
 enabled = true
-verify_jwt = false
+# verify_jwt = true: only authenticated users may open the billing portal.
+verify_jwt = true
 entrypoint = "./functions/billing-portal/index.ts"
 
 [functions.stripe-webhook]
 enabled = true
+# verify_jwt = false: REQUIRED — Stripe cannot send a Supabase JWT. Authenticity
+# is verified by the Stripe webhook signature via constructEventAsync().
 verify_jwt = false
 import_map = "./functions/stripe-webhook/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
@@ -38,15 +56,22 @@ entrypoint = "./functions/stripe-webhook/index.ts"
 
 [functions.weekly-digest]
 enabled = true
-verify_jwt = false
+# verify_jwt = true: not user-facing; invoked by a scheduled job that sends the
+# service-role key as the bearer (a valid JWT). If your scheduler does NOT send
+# that bearer, this will 401 — keep it false and protect the trigger instead.
+verify_jwt = true
 entrypoint = "./functions/weekly-digest/index.ts"
 
 [functions.stream-generate]
 enabled = true
+# verify_jwt = false: code does manual JWT validation against /auth/v1/user and
+# returns 401 for unauthenticated callers.
 verify_jwt = false
 entrypoint = "./functions/stream-generate/index.ts"
 
 [functions.generate-quiz]
 enabled = true
+# verify_jwt = false: code does manual JWT validation against /auth/v1/user and
+# returns 401 for unauthenticated callers; daily quiz limit enforced server-side.
 verify_jwt = false
 entrypoint = "./functions/generate-quiz/index.ts"
