@@ -1,3 +1,5 @@
+import { z } from "https://esm.sh/zod@3.25.76";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -6,6 +8,14 @@ const corsHeaders = {
 
 const WHALE_CREDIT_LIMIT = 100;
 const MAX_MESSAGES_PER_MINUTE = 3;
+
+const BodySchema = z.object({
+  messages: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string().max(4000),
+  })).min(1).max(50),
+  stepContext: z.string().max(8000).nullish(),
+});
 
 // Variable cost: 8–15 credits based on message length, giving uneven %
 function messageCost(text: string): number {
@@ -22,7 +32,15 @@ Deno.serve(async (req: Request) => {
   const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 
   try {
-    const { messages, stepContext } = await req.json();
+    const raw = await req.json().catch(() => null);
+    const parsed = BodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return new Response(
+        JSON.stringify({ error: "invalid_request", detail: parsed.error.issues?.[0]?.message ?? "Invalid request body." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const { messages, stepContext } = parsed.data;
 
     // ── Auth & credit check ──────────────────────────────────────────────────
     const authHeader = req.headers.get("authorization");

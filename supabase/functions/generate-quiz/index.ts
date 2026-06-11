@@ -1,7 +1,14 @@
+import { z } from "https://esm.sh/zod@3.25.76";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const BodySchema = z.object({
+  topics: z.array(z.string().max(200)).min(1).max(20),
+  goal: z.string().max(500).optional(),
+});
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -12,14 +19,15 @@ Deno.serve(async (req: Request) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
   try {
-    const { topics, goal } = await req.json();
-
-    if (!topics || !Array.isArray(topics) || topics.length === 0) {
-      return new Response(JSON.stringify({ error: "No topics provided" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    const raw = await req.json().catch(() => null);
+    const parsed = BodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return new Response(
+        JSON.stringify({ error: "invalid_request", detail: parsed.error.issues?.[0]?.message ?? "Invalid request body." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
+    const { topics, goal } = parsed.data;
 
     // ── Authentication & rate limit check ────────────────────────────────────
     const authHeader = req.headers.get("authorization");

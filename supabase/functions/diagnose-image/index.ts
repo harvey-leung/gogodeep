@@ -1,3 +1,5 @@
+import { z } from "https://esm.sh/zod@3.25.76";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -25,6 +27,19 @@ const GUEST_SCAN_LIMIT = 2;            // free guest scans per IP per day
 // Master kill-switch parity with src/lib/featureFlags.ts. When set, skip all
 // per-user credit enforcement (everyone unlimited).
 const FREE_FOR_ALL = Deno.env.get("FREE_FOR_ALL") === "true";
+
+const BodySchema = z.object({
+  image: z.string().max(USER_MAX_IMAGE_B64).optional(),
+  mimeType: z.string().max(100).optional(),
+  mode: z.enum(["identify", "guide", "guide_steps", "guide_concept", "more_practice"]).default("identify"),
+  text: z.string().max(8000).optional(),
+  practice_count: z.number().int().min(1).max(10).optional(),
+  topic: z.string().max(500).optional(),
+  start_id: z.number().int().min(0).max(100000).optional(),
+  what_happened: z.string().max(2000).optional(),
+  complexity: z.number().int().min(1).max(4).optional().default(2),
+  turnstileToken: z.string().max(4000).optional(),
+});
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -82,8 +97,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json();
-    const { image, mimeType, mode = "identify", text, practice_count, topic, start_id, what_happened, complexity = 2, turnstileToken } = body;
+    const raw = await req.json().catch(() => null);
+    const parsed = BodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return json({ error: "invalid_request", detail: parsed.error.issues?.[0]?.message ?? "Invalid request body." }, 400);
+    }
+    const { image, mimeType, mode, text, practice_count, topic, start_id, what_happened, complexity, turnstileToken } = parsed.data;
     console.log("diagnose-image invoked, mode:", mode, "text:", !!text);
 
     // ── Authentication & guest gating ─────────────────────────────────────────

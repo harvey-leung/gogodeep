@@ -1,7 +1,17 @@
+import { z } from "https://esm.sh/zod@3.25.76";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const BodySchema = z.object({
+  action: z.enum(["validate_goal", "intake_questions", "program", "diagnostic", "practice"]),
+  goal: z.string().max(500).optional(),
+  intakeAnswers: z.record(z.string().max(200), z.string().max(1000)).optional(),
+  topics: z.array(z.string().max(200)).max(20).optional(),
+  level: z.number().int().min(1).max(10).optional(),
+});
 
 // Actions:
 //   validate_goal     - given goal string, return whether it's specific enough to build on
@@ -26,7 +36,15 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { action, goal, intakeAnswers, topics, level } = await req.json();
+    const raw = await req.json().catch(() => null);
+    const parsed = BodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return new Response(
+        JSON.stringify({ error: "invalid_request", detail: parsed.error.issues?.[0]?.message ?? "Invalid request body." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const { action, goal, intakeAnswers, topics, level } = parsed.data;
 
     // Auth check
     const authHeader = req.headers.get("authorization");
