@@ -22,6 +22,10 @@ const GUEST_MAX_IMAGE_B64 = 2_800_000; // ~2 MB of binary
 const USER_MAX_IMAGE_B64 = 9_000_000;  // ~6.5 MB of binary
 const GUEST_SCAN_LIMIT = 2;            // free guest scans per IP per day
 
+// Master kill-switch parity with src/lib/featureFlags.ts. When set, skip all
+// per-user credit enforcement (everyone unlimited).
+const FREE_FOR_ALL = Deno.env.get("FREE_FOR_ALL") === "true";
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -89,10 +93,32 @@ Deno.serve(async (req: Request) => {
     const today = new Date().toISOString().split("T")[0];
 
     if (userId) {
-      // Authenticated: enforce the authenticated image ceiling. (Per-user scan
-      // credits are decremented in item 2.)
+      // Authenticated: enforce the authenticated image ceiling.
       if (typeof image === "string" && image.length > USER_MAX_IMAGE_B64) {
         return json({ error: "Image is too large. Please use a smaller photo." }, 413);
+      }
+
+      // Atomically check + decrement the user's scan credits server-side before
+      // spending any AI budget. Only the expensive primary scan modes consume.
+      if (PRIMARY_MODES.has(mode) && !FREE_FOR_ALL) {
+        const creditRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consume_scan_credit`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            apikey: SERVICE_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_user_id: userId }),
+        });
+        if (!creditRes.ok) {
+          console.error("consume_scan_credit failed:", creditRes.status, await creditRes.text());
+          return json({ error: "Could not verify your scan credits. Please try again." }, 503);
+        }
+        const rows = await creditRes.json();
+        const row = Array.isArray(rows) ? rows[0] : rows;
+        if (!row?.allowed) {
+          return json({ error: "daily_limit_reached", message: "You've used all your scans for today." }, 429);
+        }
       }
     } else {
       // Guest path. Require a verified Turnstile token; fail closed.

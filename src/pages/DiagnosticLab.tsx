@@ -320,14 +320,13 @@ const DiagnosticLab = () => {
         ].filter(Boolean).join("\n");
 
 
-        const [{ data: insertedScan, error: insertError }] = await Promise.all([
-          (supabase as any)
-            .from("error_logs")
-            .insert({ student_id: user.id, subject: "STEM", topic, specific_error_tag: null, error_category: null, diagnosis: data })
-            .select("id")
-            .single(),
-          (supabase as any).rpc("increment_scan_count", { user_id: user.id }),
-        ]);
+        // Scan credits are decremented server-side by diagnose-image
+        // (consume_scan_credit); the client no longer calls increment_scan_count.
+        const { data: insertedScan, error: insertError } = await (supabase as any)
+          .from("error_logs")
+          .insert({ student_id: user.id, subject: "STEM", topic, specific_error_tag: null, error_category: null, diagnosis: data })
+          .select("id")
+          .single();
 
         if (insertError) {
           console.error("error_logs insert failed:", insertError);
@@ -454,14 +453,13 @@ const DiagnosticLab = () => {
       ].filter(Boolean).join("\n");
 
 
-      const [{ data: insertedScan, error: insertError }] = await Promise.all([
-        (supabase as any)
-          .from("error_logs")
-          .insert({ student_id: user.id, subject: "STEM", topic, specific_error_tag: null, error_category: null, diagnosis: data })
-          .select("id")
-          .single(),
-        (supabase as any).rpc("increment_scan_count", { user_id: user.id }),
-      ]);
+      // Scan credits are decremented server-side by diagnose-image
+      // (consume_scan_credit); the client no longer calls increment_scan_count.
+      const { data: insertedScan, error: insertError } = await (supabase as any)
+        .from("error_logs")
+        .insert({ student_id: user.id, subject: "STEM", topic, specific_error_tag: null, error_category: null, diagnosis: data })
+        .select("id")
+        .single();
 
       if (insertError) {
         console.error("error_logs insert failed:", insertError);
