@@ -552,6 +552,7 @@ export default function WhaleAssistant() {
               <textarea
                 ref={inputRef}
                 rows={1}
+                maxLength={2000}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onInput={(e) => {

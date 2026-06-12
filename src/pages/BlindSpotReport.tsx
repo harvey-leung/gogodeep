@@ -849,6 +849,7 @@ function WhaleChatPanel({ diagnosis, onClose, pendingMessage, onMessageHandled, 
           <textarea
             ref={inputRef}
             rows={1}
+            maxLength={2000}
             value={input}
             onChange={(e) => { setInput(e.target.value); if (e.target.value) setShowSuggestions(false); }}
             onInput={(e) => {
@@ -1834,6 +1835,7 @@ const BlindSpotReport = () => {
           <input
             autoFocus
             value={titleDraft}
+            maxLength={80}
             onChange={(e) => setTitleDraft(e.target.value)}
             onBlur={commitTitleRename}
             onKeyDown={(e) => {

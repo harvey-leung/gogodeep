@@ -91,7 +91,7 @@ export default function Settings() {
                   onKeyDown={(e) => { if (e.key === "Enter") saveName(); }}
                   className="border-border bg-secondary"
                   placeholder="Display name"
-                  maxLength={40}
+                  maxLength={32}
                 />
                 <Button className="bg-primary hover:bg-primary/90 shrink-0" onClick={saveName} disabled={saving || !newName.trim()}>
                   Save

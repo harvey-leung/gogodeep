@@ -357,6 +357,7 @@ function ScanRow({
           ref={inputRef}
           data-action-btn
           value={draft}
+          maxLength={80}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitRename}
           onKeyDown={(e) => {

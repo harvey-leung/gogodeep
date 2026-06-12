@@ -387,6 +387,7 @@ export const DemoPanel = () => {
             >
               <input
                 value={blueQuestion}
+                maxLength={200}
                 onChange={(e) => { setBlueQuestion(e.target.value); lastInteractionRef.current = Date.now(); }}
                 placeholder="Ask Blue a question…"
                 disabled={blueReplied || blueTyping}

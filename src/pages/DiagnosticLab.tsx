@@ -701,6 +701,7 @@ const DiagnosticLab = () => {
                 disabled={isAnalyzing}
                 placeholder="Type or paste your question here…"
                 rows={4}
+                maxLength={2000}
                 className={`w-full resize-none bg-transparent px-5 py-4 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none disabled:opacity-50 ${isChallengeMode ? "bg-amber-400/[0.03]" : ""}`}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && textInput.trim()) {
@@ -710,8 +711,11 @@ const DiagnosticLab = () => {
                 }}
               />
               <div className={`flex items-center justify-between border-t px-5 py-3 ${isChallengeMode ? "border-amber-400/20 bg-amber-400/[0.04]" : "border-primary/10 bg-primary/[0.02]"}`}>
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
+                <span className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
                   {isMac ? "⌘↵" : "Ctrl+↵"} to scan
+                  {textInput.length > 1500 && (
+                    <span className={textInput.length >= 2000 ? "text-amber-500" : ""}>{textInput.length}/2000</span>
+                  )}
                 </span>
                 <button
                   onClick={analyzeText}

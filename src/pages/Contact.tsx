@@ -87,6 +87,7 @@ const Contact = () => {
                         onChange={(e) => setName(e.target.value)}
                         className="border-border bg-secondary pl-9"
                         placeholder="Your name"
+                        maxLength={80}
                         required
                       />
                     </div>
@@ -102,6 +103,7 @@ const Contact = () => {
                         onChange={(e) => setEmail(e.target.value)}
                         className="border-border bg-secondary pl-9"
                         placeholder="name@example.com"
+                        maxLength={254}
                         required
                       />
                     </div>
@@ -129,9 +131,13 @@ const Contact = () => {
                         onChange={(e) => setMessage(e.target.value)}
                         rows={5}
                         required
+                        maxLength={2000}
                         placeholder="Tell us what's on your mind…"
                         className="w-full rounded-md border border-border bg-secondary py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
                       />
+                      {message.length > 1500 && (
+                        <span className={`pointer-events-none absolute bottom-2 right-2 text-[10px] ${message.length >= 2000 ? "text-amber-500" : "text-muted-foreground/50"}`}>{message.length}/2000</span>
+                      )}
                     </div>
                   </div>
 

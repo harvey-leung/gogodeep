@@ -846,6 +846,7 @@ export default function Stream() {
                             <input
                               autoFocus
                               value={renameDraft}
+                              maxLength={80}
                               onChange={(e) => setRenameDraft(e.target.value)}
                               onBlur={() => renameStream(s.id, renameDraft.trim() || s.program.title)}
                               onKeyDown={(e) => {
@@ -927,6 +928,7 @@ export default function Stream() {
                 }}
                 placeholder="e.g. I want to learn how to factor quadratic equations"
                 rows={4}
+                maxLength={500}
                 className={cn(
                   "w-full resize-none rounded-2xl border bg-card/60 px-6 py-4 text-lg text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 transition-all",
                   goalError
@@ -934,15 +936,20 @@ export default function Stream() {
                     : "border-border focus:border-primary/60 focus:ring-primary/40"
                 )}
               />
-              {goalError && (
-                <motion.p
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="text-sm text-destructive"
-                >
-                  {goalError}
-                </motion.p>
-              )}
+              <div className="flex items-center justify-between gap-2">
+                {goalError ? (
+                  <motion.p
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-sm text-destructive"
+                  >
+                    {goalError}
+                  </motion.p>
+                ) : <span />}
+                {goal.length > 300 && (
+                  <span className={cn("shrink-0 text-[11px]", goal.length >= 500 ? "text-amber-500" : "text-muted-foreground/50")}>{goal.length}/500</span>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-between">
@@ -1118,6 +1125,7 @@ export default function Stream() {
                   <input
                     autoFocus
                     value={intakeTextDraft}
+                    maxLength={500}
                     onChange={(e) => setIntakeTextDraft(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && intakeTextDraft.trim()) answerText(); }}
                     placeholder="Type your answer..."
