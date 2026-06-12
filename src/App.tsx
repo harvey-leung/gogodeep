@@ -11,8 +11,8 @@ import AppSidebar from "@/components/AppSidebar";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import WhaleAssistant from "@/components/WhaleAssistant";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import Index from "./pages/Index";
-import { DashboardRoute } from "./pages/Index";
+import Home from "./pages/Landing";
+import { DashboardRoute } from "./pages/Dashboard";
 import DiagnosticLab from "./pages/DiagnosticLab";
 import BlindSpotReport from "./pages/BlindSpotReport";
 import Pricing from "./pages/Pricing";
@@ -84,7 +84,7 @@ function AnimatedRoutes() {
     <>
       {/* Render the background page when pricing is open as an overlay */}
       <Routes location={backgroundLocation ?? location} key={(backgroundLocation ?? location).pathname}>
-        <Route path="/" element={<Index />} />
+        <Route path="/" element={<Home />} />
         <Route path="/dashboard" element={<DashboardRoute />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
