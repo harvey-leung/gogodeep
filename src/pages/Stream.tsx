@@ -1162,7 +1162,7 @@ export default function Stream() {
               <Waves className="h-5 w-5" />
               <span className="text-sm font-semibold uppercase tracking-widest">Your Stream</span>
             </div>
-            <h2 className="text-4xl font-bold text-foreground">{program.title}</h2>
+            <h2 className="text-4xl font-bold text-foreground break-words">{program.title}</h2>
             {program.targetDate && (
               <p className="text-base text-muted-foreground">Until {formatDate(program.targetDate)}</p>
             )}

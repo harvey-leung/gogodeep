@@ -185,8 +185,8 @@ const Dashboard = ({ user }: { user: User }) => {
         <div className="container max-w-6xl py-8">
 
           {/* Greeting */}
-          <div className="mb-6">
-            <h1 className="text-4xl sm:text-5xl font-black tracking-tighter text-foreground leading-none">
+          <div className="mb-6 min-w-0">
+            <h1 className="text-4xl sm:text-5xl font-black tracking-tighter text-foreground leading-none break-words">
               {greeting},{" "}
               <span className="text-primary">{username}</span>
             </h1>

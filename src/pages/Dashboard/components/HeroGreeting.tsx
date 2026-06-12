@@ -25,7 +25,7 @@ export function HeroGreeting({
         pointerEvents: heroPhase === 1 ? "none" : "auto",
       }}
     >
-      <h1 className="hero-in text-center text-6xl sm:text-8xl font-black tracking-tighter text-foreground leading-tight">
+      <h1 className="hero-in max-w-full break-words text-center text-6xl sm:text-8xl font-black tracking-tighter text-foreground leading-tight">
         {greeting},
         <br /><span className="text-primary">{username}</span>
       </h1>
