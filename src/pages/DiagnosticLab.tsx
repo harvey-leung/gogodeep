@@ -171,6 +171,9 @@ const DiagnosticLab = () => {
   const [cooldownActive, setCooldownActive] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Synchronous single-flight guard: blocks a second scan from starting before
+  // isAnalyzing has had a chance to disable the button (Enter + click in one tick).
+  const scanInFlightRef = useRef(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -215,6 +218,9 @@ const DiagnosticLab = () => {
 
   const analyzeImage = useCallback(
     async (file: File) => {
+      if (scanInFlightRef.current) return;
+      scanInFlightRef.current = true;
+      try {
       const complexityLevel = 2;
       if (!await checkCooldown()) return;
       const {
@@ -363,6 +369,9 @@ const DiagnosticLab = () => {
         setIsAnalyzing(false);
         setScanComplete(false);
       }
+      } finally {
+        scanInFlightRef.current = false;
+      }
     },
     [navigate, queryClient]
   );
@@ -378,6 +387,9 @@ const DiagnosticLab = () => {
       return;
     }
 
+    if (scanInFlightRef.current) return;
+    scanInFlightRef.current = true;
+    try {
     if (!await checkCooldown()) return;
 
     const {
@@ -489,6 +501,9 @@ const DiagnosticLab = () => {
       whaleToast.error("Scan failed. Please try again.");
       setIsAnalyzing(false);
       setScanComplete(false);
+    }
+    } finally {
+      scanInFlightRef.current = false;
     }
   }, [textInput, navigate, queryClient]);
 

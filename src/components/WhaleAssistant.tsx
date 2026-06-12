@@ -102,6 +102,9 @@ export default function WhaleAssistant() {
   const bubbleBusy = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Synchronous single-flight guard: blocks a same-tick double send (Enter + click)
+  // before the `loading` state has re-rendered the disabled button.
+  const sendInFlightRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ startX: number; startY: number; top: number; left: number } | null>(null);
 
@@ -304,7 +307,7 @@ export default function WhaleAssistant() {
 
   async function send() {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || loading || sendInFlightRef.current) return;
 
     // Chatting with Blue requires an account (server returns 401 for guests).
     if (isGuest) {
@@ -322,6 +325,7 @@ export default function WhaleAssistant() {
       return;
     }
 
+    sendInFlightRef.current = true;
     const next: Message[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setInput("");
@@ -362,6 +366,7 @@ export default function WhaleAssistant() {
       setMessages((prev) => [...prev, { role: "assistant", content: errMsg?.includes("429") ? "Server is busy. Try again in a moment." : "Something went wrong. Try again in a moment." }]);
     } finally {
       setLoading(false);
+      sendInFlightRef.current = false;
     }
   }
 

@@ -340,6 +340,8 @@ export default function Stream() {
   const [goal, setGoal] = useState("");
   const [goalError, setGoalError] = useState<string | null>(null);
   const [validatingGoal, setValidatingGoal] = useState(false);
+  // Synchronous single-flight guard for goal submit (Enter + click same tick).
+  const goalSubmitRef = useRef(false);
 
   // Intake phase
   const [intakeQuestions, setIntakeQuestions] = useState<IntakeQuestion[]>([]);
@@ -465,7 +467,8 @@ export default function Stream() {
   }
 
   async function submitGoal() {
-    if (!goal.trim() || validatingGoal) return;
+    if (!goal.trim() || validatingGoal || goalSubmitRef.current) return;
+    goalSubmitRef.current = true;
     setGoalError(null);
     setValidatingGoal(true);
     try {
@@ -473,6 +476,7 @@ export default function Stream() {
       if (data?.valid === false) {
         setGoalError(data.reason || "That goal's a bit too vague — try adding what subject, skill, or exam you're focusing on.");
         setValidatingGoal(false);
+        goalSubmitRef.current = false;
         return;
       }
     } catch { /* if validation itself fails, let the user proceed */ }
@@ -493,6 +497,7 @@ export default function Stream() {
     setIntakeQuestions(questions);
     setIntakeIndex(0);
     setPhase("intake");
+    goalSubmitRef.current = false;
   }
 
   function advanceIntake(answer: string) {

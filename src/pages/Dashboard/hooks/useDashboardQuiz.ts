@@ -34,6 +34,7 @@ export function useDashboardQuiz({
   const [quizKey, setQuizKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resumeElapsedRef = useRef(0);
+  const genInFlightRef = useRef(false); // single-flight guard for quiz generation
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [quizHistory, setQuizHistory] = useState<QuizHistoryEntry[]>(() => {
     try { return JSON.parse(localStorage.getItem(QUIZ_HIST_KEY) ?? "[]"); } catch { return []; }
@@ -46,11 +47,14 @@ export function useDashboardQuiz({
   });
 
   const fetchRecapQuiz = useCallback((topics: string[]) => {
+    if (genInFlightRef.current) return;
+    genInFlightRef.current = true;
     const today = new Date().toISOString().split("T")[0];
     setQuizLoading(true);
     setQuizQuestions(null);
     setQuizGenError(null);
     generateQuiz(topics).then((result) => {
+      genInFlightRef.current = false;
       setQuizLoading(false);
       if (!Array.isArray(result?.questions) || !result.questions.length) {
         console.error("[Quiz] generate-quiz failed:", result);
