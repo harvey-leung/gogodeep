@@ -6,7 +6,7 @@ import type { DashboardData } from "@/types/dashboard";
 import type { ErrorLog } from "@/types/domain";
 import { queryKeys } from "./queryKeys";
 import { fetchErrorLogs } from "./scans";
-import { applyDailyResetAndStreak, fetchDashboardProfile } from "./profile";
+import { applyDailyResetAndStreak } from "./profile";
 
 /**
  * Loads and derives everything the dashboard renders. Ported verbatim from the
@@ -15,12 +15,12 @@ import { applyDailyResetAndStreak, fetchDashboardProfile } from "./profile";
  * layer and run through React Query.
  */
 export async function loadDashboardData(userId: string): Promise<DashboardData> {
-  const [logs, profile] = await Promise.all([
+  const [logs, daily] = await Promise.all([
     fetchErrorLogs(userId),
-    fetchDashboardProfile(userId),
+    applyDailyResetAndStreak(),
   ]);
 
-  const { used, bonusScans, loginStreak, plan, bonusAwarded } = await applyDailyResetAndStreak(userId, profile);
+  const { used, bonusScans, loginStreak, plan, bonusAwarded } = daily;
   if (bonusAwarded > 0) {
     whaleToast.success(`7-day streak! You've earned ${bonusAwarded} bonus credits.`);
   }

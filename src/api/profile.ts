@@ -28,42 +28,21 @@ export interface DailyResetResult {
 }
 
 /**
- * Applies the once-per-day scan-count reset and login-streak bookkeeping,
- * writing back to profiles. Ported verbatim from the old Index `load()` so
- * behaviour is identical.
+ * Runs the once-per-day scan-count reset + login-streak bookkeeping server-side
+ * via the claim_daily_login() SECURITY DEFINER function (keyed on auth.uid()).
  *
- * TODO(phase0): this client-side write to rate-limit/credit columns is replaced
- * by a SECURITY DEFINER claim_daily_login() on the phase-0-security branch. Kept
- * as-is here to avoid behaviour changes during the refactor.
+ * Phase 0 migration 200004 revokes direct client UPDATEs to the rate-limit /
+ * credit / streak columns, so all the mutation happens inside the function; the
+ * client only reads back the resulting state.
  */
-export async function applyDailyResetAndStreak(
-  userId: string,
-  profile: DashboardProfile | null,
-): Promise<DailyResetResult> {
-  const today = new Date().toISOString().split("T")[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
-  const plan = profile?.plan ?? "free";
-
-  const isNewDay = (profile?.scan_reset_date ?? "") < today;
-  if (isNewDay) {
-    await (supabase as any).from("profiles").update({ daily_scan_count: 0, scan_reset_date: today }).eq("id", userId);
-  }
-  const used = isNewDay ? 0 : (profile?.daily_scan_count ?? 0);
-  let bonusScans: number = profile?.bonus_scans ?? 0;
-
-  const lastLogin: string = profile?.last_login_date ?? "";
-  let loginStreak: number = profile?.login_streak ?? 0;
-  let bonusAwarded = 0;
-  if (lastLogin < today) {
-    loginStreak = lastLogin === yesterday ? loginStreak + 1 : 1;
-    const streakUpdates: Record<string, unknown> = { last_login_date: today, login_streak: loginStreak };
-    if (plan !== "deep" && loginStreak % 7 === 0) {
-      bonusAwarded = plan === "intermediate" ? 20 : 10;
-      bonusScans += bonusAwarded;
-      streakUpdates.bonus_scans = bonusScans;
-    }
-    await (supabase as any).from("profiles").update(streakUpdates).eq("id", userId);
-  }
-
-  return { used, bonusScans, loginStreak, plan, bonusAwarded };
+export async function applyDailyResetAndStreak(): Promise<DailyResetResult> {
+  const { data } = await (supabase as any).rpc("claim_daily_login");
+  const claim = (Array.isArray(data) ? data[0] : data) ?? {};
+  return {
+    used: claim.daily_scan_count ?? 0,
+    bonusScans: claim.bonus_scans ?? 0,
+    loginStreak: claim.login_streak ?? 0,
+    plan: claim.plan ?? "free",
+    bonusAwarded: claim.bonus_awarded ?? 0,
+  };
 }
