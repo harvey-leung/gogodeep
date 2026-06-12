@@ -12,17 +12,16 @@
 --
 -- IMPORTANT REVIEW NOTES:
 --   * This assumes the default Supabase grant model where `authenticated` holds
---     table-level UPDATE on public.profiles and RLS restricts the row. Verify
---     against your actual grants before applying.
---   * The benign column whitelist is { username, lab_state } — the only columns
---     the client currently writes (Settings.tsx, HistorySidebar.tsx,
---     BlindSpotReport.tsx). If other client-writable columns exist, add them.
+--     table-level UPDATE on public.profiles and RLS restricts the row.
+--   * lab_state is the ONLY column the client may write directly (history/report
+--     UI state). The display name is NOT stored on profiles — it lives in
+--     auth.users user_metadata and is updated via supabase.auth.updateUser().
 --   * Row-level SELECT/UPDATE RLS policies are intentionally left unchanged.
 
 revoke update on table public.profiles from anon, authenticated;
 
--- Re-grant UPDATE only on the benign, user-owned columns.
-grant update (username, lab_state) on table public.profiles to authenticated;
+-- Re-grant UPDATE only on the single client-writable column.
+grant update (lab_state) on table public.profiles to authenticated;
 
 -- Daily login bookkeeping (scan-count reset + login streak + 7-day bonus credits),
 -- moved server-side out of Index.tsx. Keyed on auth.uid() so a caller can only

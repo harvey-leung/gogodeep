@@ -50,9 +50,10 @@ export default function Settings() {
   async function saveName() {
     if (!user || !newName.trim()) return;
     setSaving(true);
+    // Display name lives in auth.users user_metadata (read everywhere via
+    // user_metadata.username); there is no profiles.username column to write.
     const { data, error } = await supabase.auth.updateUser({ data: { username: newName.trim() } });
     if (!error) {
-      await (supabase as any).from("profiles").update({ username: newName.trim() }).eq("id", user.id);
       setUser(data.user);
       whaleToast.success("Name updated.");
     } else {

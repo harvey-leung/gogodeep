@@ -9,18 +9,14 @@
 -- `VALIDATE CONSTRAINT` later once any legacy rows are cleaned up if desired.
 --
 -- Chosen limits (mirror the client):
---   profiles.username            32   (display name)
 --   error_logs.topic             500  (concept/topic label)
 --   error_logs.specific_error_tag 200 (short error label)
 --   contact_messages.name        80
 --   contact_messages.email       254  (RFC 5321 max)
 --   contact_messages.message     2000
--- Streams/program names are not persisted server-side (client/localStorage only),
--- so they are capped on the client at 80 with no DB column to constrain.
-
-alter table public.profiles
-  add constraint profiles_username_len
-  check (char_length(username) <= 32) not valid;
+-- The display name is not stored on profiles (it's in auth.users metadata), and
+-- stream/program names are client/localStorage only — so neither has a DB column
+-- to constrain; both are capped on the client.
 
 alter table public.error_logs
   add constraint error_logs_topic_len
