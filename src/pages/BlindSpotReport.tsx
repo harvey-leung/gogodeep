@@ -1138,7 +1138,7 @@ function DeckReport({
       {/* Guest banner */}
       {isGuest && (
         <div className="mx-4 mb-1 flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 shrink-0">
-          <p className="text-xs font-semibold text-foreground min-w-0">Save this scan — <span className="text-muted-foreground">create a free account</span></p>
+          <p className="text-xs font-semibold text-foreground min-w-0">Don't lose this scan. <span className="text-muted-foreground">Create a free account!</span></p>
           <Button size="sm" className="shrink-0 h-7 px-3 text-xs bg-primary hover:bg-primary/90" onClick={onSignup}>
             Sign up
           </Button>
